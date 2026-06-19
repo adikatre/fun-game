@@ -1,0 +1,189 @@
+// Headless sim harness — runs sim.ts (no DOM) with a crude auto-controller so we
+// can measure the tension curve, determinism, and per-step timing without a
+// browser. Run via: npm run sim:test
+//
+// The auto-controller is NOT skilled play. It clears one plane to final per
+// runway at a time, holds the overflow, and breaks conflicts by sending a plane
+// into a hold. It exists to keep traffic flowing so the loop can be observed.
+
+import { CONFIG } from '../src/config';
+import { assignApproach, createGame, toggleHold, update } from '../src/sim';
+import type { GameState } from '../src/types';
+
+const STEP = 1 / CONFIG.simStepHz;
+
+function dist(ax: number, ay: number, bx: number, by: number) {
+  return Math.hypot(ax - bx, ay - by);
+}
+
+function plan(state: GameState): void {
+  // 1) break conflicts: send a conflicting plane into a hold (unless near touchdown)
+  for (const ac of state.aircraft) {
+    if (!ac.conflict) continue;
+    const rw = ac.assignedRunwayId != null ? state.runways.find((r) => r.id === ac.assignedRunwayId) : undefined;
+    const nearTouchdown = rw && dist(ac.x, ac.y, rw.approachEnd.x, rw.approachEnd.y) < 110;
+    if (ac.phase !== 'holding' && !nearTouchdown) toggleHold(state, ac.id);
+  }
+
+  // 2) fill each runway: accept a new approacher when empty, or a 2nd once the
+  //    leader is well down the final. Prefer emergencies, then low fuel, then
+  //    planes already on the approach (east) side to avoid ugly U-turns.
+  const assigned = new Set<number>();
+  for (const rw of state.runways) {
+    const appr = state.aircraft.filter((a) => a.phase === 'approach' && a.assignedRunwayId === rw.id);
+    const leadClose = appr.length > 0 && appr.every((a) => dist(a.x, a.y, rw.approachEnd.x, rw.approachEnd.y) < 150);
+    const canAccept = appr.length === 0 || (appr.length < 2 && leadClose);
+    if (!canAccept) continue;
+
+    const candidates = state.aircraft
+      .filter(
+        (a) =>
+          !assigned.has(a.id) &&
+          a.assignedRunwayId == null &&
+          (a.phase === 'inbound' || a.phase === 'vectoring' || a.phase === 'holding') &&
+          !a.conflict,
+      )
+      .sort((a, b) => {
+        const ea = a.emergency !== 'none' ? 0 : 1;
+        const eb = b.emergency !== 'none' ? 0 : 1;
+        if (ea !== eb) return ea - eb;
+        return a.fuelSeconds - b.fuelSeconds;
+      });
+    // prefer a candidate already east of the airport (same side as the finals)
+    const pick = candidates.find((a) => a.x > rw.finalEntry.x - 120) ?? candidates[0];
+    if (pick) {
+      assignApproach(state, pick.id, rw.id);
+      assigned.add(pick.id);
+    }
+  }
+
+  // 3) park anything still loose so it doesn't fly off and divert
+  for (const ac of state.aircraft) {
+    if (ac.phase !== 'inbound' && ac.phase !== 'vectoring') continue;
+    if (ac.assignedRunwayId != null || ac.conflict) continue;
+    toggleHold(state, ac.id);
+  }
+}
+
+interface Result {
+  handled: number;
+  incidents: number;
+  nearMisses: number;
+  goArounds: number;
+  diversions: number;
+  cash: number;
+  timeEnded: number;
+  totalSpawned: number;
+  rngState: number;
+  gameOver: boolean;
+  samples: { t: number; handled: number; incidents: number; airborne: number; cash: number }[];
+}
+
+function run(seed: number, maxSeconds: number, withPlanner: boolean): Result {
+  const state = createGame(seed);
+  const samples: Result['samples'] = [];
+  let step = 0;
+  const planEvery = Math.round(0.5 / STEP);
+  const sampleEvery = Math.round(10 / STEP);
+
+  while (state.time < maxSeconds && state.status === 'playing') {
+    if (withPlanner && step % planEvery === 0) plan(state);
+    update(state, STEP);
+    if (step % sampleEvery === 0) {
+      samples.push({
+        t: Math.round(state.time),
+        handled: state.handled,
+        incidents: state.incidents,
+        airborne: state.aircraft.length,
+        cash: state.cash,
+      });
+    }
+    step++;
+  }
+  return {
+    handled: state.handled,
+    incidents: state.incidents,
+    nearMisses: state.nearMisses,
+    goArounds: state.goArounds,
+    diversions: state.diversions,
+    cash: state.cash,
+    timeEnded: state.time,
+    totalSpawned: state.totalSpawned,
+    rngState: state.rng.state,
+    gameOver: state.status === 'gameover',
+    samples,
+  };
+}
+
+console.log('=== Final Approach — headless sim harness ===\n');
+
+// 1) No-input baseline: how fast does it fall apart if the controller does nothing?
+const idle = run(CONFIG.defaultSeed, 600, false);
+console.log(
+  `No-input baseline: ${idle.gameOver ? `FIRED at t=${idle.timeEnded.toFixed(1)}s` : `survived ${idle.timeEnded}s`}` +
+    `  (handled=${idle.handled}, spawned=${idle.totalSpawned}, incidents=${idle.incidents})`,
+);
+
+// 2) Auto-controller run, full tension curve.
+const play = run(CONFIG.defaultSeed, 600, true);
+console.log(
+  `\nAuto-controller (seed=${CONFIG.defaultSeed}): ${
+    play.gameOver ? `FIRED at t=${play.timeEnded.toFixed(1)}s` : `survived ${play.timeEnded.toFixed(0)}s`
+  }`,
+);
+console.log(
+  `  handled=${play.handled}  cash=$${play.cash}  spawned=${play.totalSpawned}  ` +
+    `incidents=${play.incidents}  near-miss=${play.nearMisses}  go-around=${play.goArounds}  diverted=${play.diversions}`,
+);
+console.log('  tension curve:');
+console.log('    t(s)  handled  incidents  airborne   cash');
+for (const s of play.samples) {
+  if (s.t % 20 !== 0) continue;
+  console.log(
+    `    ${s.t.toString().padStart(4)}  ${s.handled.toString().padStart(7)}  ${s.incidents
+      .toString()
+      .padStart(9)}  ${s.airborne.toString().padStart(8)}  ${('$' + s.cash).padStart(6)}`,
+  );
+}
+
+// 3) Determinism.
+const a = run(CONFIG.defaultSeed, 220, true);
+const b = run(CONFIG.defaultSeed, 220, true);
+const deterministic =
+  a.handled === b.handled &&
+  a.incidents === b.incidents &&
+  a.cash === b.cash &&
+  a.rngState === b.rngState &&
+  a.totalSpawned === b.totalSpawned;
+console.log(
+  `\nDeterminism (two identical 220s runs): ${deterministic ? 'PASS' : 'FAIL'}  ` +
+    `[handled ${a.handled}/${b.handled}, cash ${a.cash}/${b.cash}, rngState ${a.rngState}/${b.rngState}]`,
+);
+const c = run(CONFIG.defaultSeed + 1, 220, true);
+console.log(`  different seed differs: ${c.handled !== a.handled || c.rngState !== a.rngState ? 'yes' : 'no'}`);
+
+// 4) Performance under load.
+const perf = createGame(CONFIG.defaultSeed);
+for (let i = 0; i < 60 * 200; i++) {
+  if (i % 30 === 0) plan(perf);
+  if (perf.status !== 'playing') break;
+  update(perf, STEP);
+}
+perf.status = 'playing';
+perf.incidents = 0;
+const N = 60 * 60 * 5;
+const t0 = performance.now();
+for (let i = 0; i < N; i++) update(perf, STEP);
+const t1 = performance.now();
+const ms = t1 - t0;
+console.log(
+  `\nPerformance: ${N} steps in ${ms.toFixed(1)}ms => ${(ms / N).toFixed(4)}ms/step ` +
+    `(loaded: ${perf.aircraft.length} aircraft)`,
+);
+console.log(
+  `  a 16.6ms frame fits ~${Math.floor(16.6 / (ms / N))} sim steps; sim uses ${((ms / N) * CONFIG.simStepHz).toFixed(
+    3,
+  )}ms CPU per real second.`,
+);
+
+console.log('\n=== done ===');
