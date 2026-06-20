@@ -10,12 +10,14 @@ export const CONFIG = {
   airportX: 600,
   airportY: 410,
 
-  // --- runways (two parallel westbound finals; finals are vertically spaced
-  //     enough that the two approach streams don't trip separation) ---
-  approachLength: 300, // length of the final-approach corridor (px)
+  // --- runways (two parallel strips; each can be landed from EITHER end, so
+  //     there are four approach corridors total; the player picks the side by
+  //     dragging the plane to it). `headingDeg` is the primary end's landing
+  //     travel direction; the reciprocal end is the opposite. ---
+  approachLength: 300, // length of each final-approach corridor (px)
   runways: [
-    { name: '27L', cx: 560, cy: 330, headingDeg: 180, length: 150 },
-    { name: '27R', cx: 560, cy: 500, headingDeg: 180, length: 150 },
+    { cx: 560, cy: 330, headingDeg: 180, length: 150, side: 'L' as const },
+    { cx: 560, cy: 500, headingDeg: 180, length: 150, side: 'R' as const },
   ],
 
   // --- failure ---
@@ -74,6 +76,21 @@ export const CONFIG = {
   diversionPenalty: 45, // a plane allowed to leave the airspace unhandled
   crashPenalty: 500,
 
+  // --- ground ops (terminal sits between the two runways) ---
+  gates: [
+    { x: 505, y: 415 },
+    { x: 555, y: 415 },
+    { x: 605, y: 415 },
+    { x: 655, y: 415 },
+  ],
+  rampWait: { x: 770, y: 415 }, // where arrivals idle if every gate is full
+  taxiSpeed: 26, // ground speed (px/s) — deliberately slow
+  groundSeparation: 22, // taxiing planes stop to avoid overlapping the one ahead
+  turnaroundSeconds: 13, // gate time (deplane / refuel / board) before it can depart
+  takeoffRollSeconds: 2.6, // runway occupancy during a takeoff roll
+  departureSalary: 120, // paid when a departure successfully climbs out
+  shortFinalGuard: 150, // a departure holds short if an arrival is this close to the shared runway
+
   // --- input ---
   planeHitRadius: 22,
   pathSampleDist: 20, // min world-px between sampled drag points
@@ -96,9 +113,13 @@ export const PALETTE = {
   runwayEdge: 'rgba(180,230,200,0.5)',
   corridorFree: 'rgba(95,224,138,0.32)',
   corridorBusy: 'rgba(232,181,74,0.45)',
-  blip: '#67e8a0', // normal aircraft
+  blip: '#67e8a0', // normal arrival
   blipDim: 'rgba(103,232,160,0.5)',
   trail: 'rgba(103,232,160,0.22)',
+  departure: '#5bd6e8', // departures / ground-bound traffic
+  gateFree: 'rgba(103,232,160,0.22)',
+  gateBusy: '#e8b54a',
+  gateReady: '#5bd6e8',
   selected: '#e9f7ee',
   warn: '#e8b54a', // low fuel / caution
   danger: '#ff5a48', // conflict / emergency / crash

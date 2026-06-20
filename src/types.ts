@@ -4,14 +4,35 @@ export type AircraftType = 'small' | 'medium' | 'heavy';
 export type Emergency = 'none' | 'lowFuel' | 'medical';
 
 /**
- * inbound   — just spawned, flying its initial heading, unmanaged
- * vectoring — following a player-drawn / clicked path of waypoints
- * holding   — orbiting a fix (racetrack-ish), burning fuel
- * approach  — locked to a runway's final, flying the corridor to touchdown
- * landing   — on the runway, decelerating; occupies the runway
- * goAround  — rejected approach, climbing out; becomes vectoring/inbound again
+ * Air-side:
+ *  inbound   — just spawned / unmanaged, flying its current heading straight
+ *  holding   — orbiting a fix, burning fuel
+ *  approach  — locked to a runway end's final, flying the corridor to touchdown
+ *  landing   — on the runway, decelerating; occupies the runway
+ * Ground-side:
+ *  taxiIn    — rolled out, taxiing to a gate (or the ramp if gates are full)
+ *  atGate    — parked, turnaround timer running (deplane / refuel / board)
+ *  readyDep  — parked, refuelled, waiting for the player to dispatch it
+ *  taxiOut   — taxiing from the gate to a runway hold-short
+ *  holdShort — waiting at the runway for it to be clear, then lines up
+ *  takeoff   — accelerating down the runway; occupies the runway
+ *  departing — airborne, climbing out to leave the airspace
  */
-export type Phase = 'inbound' | 'vectoring' | 'holding' | 'approach' | 'landing' | 'goAround';
+export type Phase =
+  | 'inbound'
+  | 'holding'
+  | 'approach'
+  | 'landing'
+  | 'taxiIn'
+  | 'atGate'
+  | 'readyDep'
+  | 'taxiOut'
+  | 'holdShort'
+  | 'takeoff'
+  | 'departing';
+
+/** Airborne phases are subject to separation conflicts; ground phases are not. */
+export const AIRBORNE_PHASES: readonly Phase[] = ['inbound', 'holding', 'approach', 'departing'];
 
 export interface Vec {
   x: number;
@@ -33,11 +54,17 @@ export interface Aircraft {
   fuelSeconds: number;
   emergency: Emergency;
   phase: Phase;
-  waypoints: Vec[]; // path being followed (vectoring/approach)
+  waypoints: Vec[]; // approach path being followed: [finalEntry, threshold]
   assignedRunwayId: number | null;
+  assignedEnd: 0 | 1 | null; // landing/takeoff end of the assigned runway
   holdCenter: Vec | null;
+  // ground state
+  gateId: number | null; // gate currently occupied / heading to
+  taxiTarget: Vec | null; // current ground destination (gate / ramp / lineup)
+  turnaround: number; // seconds left at the gate
   age: number; // seconds since spawn (gates diversion / on-time bonus)
-  landTimer: number; // rollout countdown while phase === 'landing'
+  landTimer: number; // runway occupancy countdown while phase === 'landing'
+  landDecel: number; // px/s² deceleration computed at touchdown (physics-based rollout)
   conflict: boolean; // inside separation with someone this tick (render)
   conflictPartner: number | null; // id of nearest conflicting plane (render connector)
   trail: Vec[]; // recent positions (radar trail)
@@ -48,18 +75,29 @@ export interface Aircraft {
   ppy: number;
 }
 
+/** One landable end of a runway (a runway has two — reciprocal directions). */
+export interface RunwayEnd {
+  name: string; // e.g. "27L" / "09R"
+  dir: number; // landing travel heading (radians), pointing from this end toward the far end
+  threshold: Vec; // touchdown point at this end
+  finalEntry: Vec; // start of this end's approach corridor (FAF), outward from the threshold
+}
+
 export interface Runway {
   id: number;
-  name: string;
-  dir: number; // landing travel heading (radians)
   cx: number;
   cy: number;
   length: number;
   width: number;
-  approachEnd: Vec; // touchdown point (start of rollout)
-  rollEnd: Vec; // far end
-  finalEntry: Vec; // start of the approach corridor (FAF)
-  occupiedUntil: number; // sim time the runway is free again
+  ends: [RunwayEnd, RunwayEnd]; // [0] primary, [1] reciprocal
+  occupiedUntil: number; // whole strip is busy during any landing/takeoff
+}
+
+export interface Gate {
+  id: number;
+  x: number;
+  y: number;
+  occupantId: number | null;
 }
 
 export type GameStatus = 'playing' | 'gameover';
@@ -80,10 +118,12 @@ export interface GameState {
 
   aircraft: Aircraft[];
   runways: Runway[];
+  gates: Gate[];
 
   // failure / score
   incidents: number; // crashes
   handled: number; // safe landings
+  departed: number; // successful departures
   cash: number;
   nearMisses: number;
   goArounds: number;
@@ -130,12 +170,14 @@ export interface Rect {
   h: number;
 }
 
-/** A drag-in-progress (drawing a flight path), produced by input for the renderer. */
+/** A drag-in-progress (choosing a runway end to land on), for the renderer. */
 export interface DragHint {
   fromAircraftId: number;
-  points: Vec[]; // sampled world points
-  snapRunwayId: number | null;
-  valid: boolean;
+  toX: number; // cursor world position
+  toY: number;
+  targetRunwayId: number | null;
+  targetEnd: 0 | 1 | null; // which end/side the drop currently selects
+  endName: string | null; // label of that end (e.g. "27L")
 }
 
 /** Everything the renderer needs about transient input/UI state. */
@@ -144,5 +186,6 @@ export interface RenderHints {
   hoverAircraftId: number | null;
   selectedAircraftId: number | null;
   hoverRunwayId: number | null;
+  hoverEnd: 0 | 1 | null;
   drag: DragHint | null;
 }

@@ -4,13 +4,15 @@
 
 import { CONFIG } from './config';
 import { createRng } from './rng';
-import type {
-  Aircraft,
-  AircraftType,
-  DraftState,
-  GameState,
-  Runway,
-  Vec,
+import {
+  AIRBORNE_PHASES,
+  type Aircraft,
+  type AircraftType,
+  type DraftState,
+  type Gate,
+  type GameState,
+  type Runway,
+  type Vec,
 } from './types';
 
 // ----------------------------------------------------------------------------
@@ -41,28 +43,39 @@ function turnToward(cur: number, target: number, maxStep: number): number {
 // construction
 // ----------------------------------------------------------------------------
 
+/** Two-digit runway number from a landing heading (screen angle, 0 = east). */
+function runwayNumber(headingDeg: number): string {
+  const compass = (((450 - headingDeg) % 360) + 360) % 360;
+  let n = Math.round(compass / 10);
+  if (n === 0) n = 36;
+  return n.toString().padStart(2, '0');
+}
+const swapSide = (s: 'L' | 'R'): 'L' | 'R' => (s === 'L' ? 'R' : 'L');
+
 function buildRunways(): Runway[] {
   return CONFIG.runways.map((r, i) => {
-    const dir = deg(r.headingDeg);
-    const dx = Math.cos(dir);
-    const dy = Math.sin(dir);
-    const approachEnd: Vec = { x: r.cx - dx * (r.length / 2), y: r.cy - dy * (r.length / 2) };
-    const rollEnd: Vec = { x: r.cx + dx * (r.length / 2), y: r.cy + dy * (r.length / 2) };
-    const finalEntry: Vec = {
-      x: approachEnd.x - dx * CONFIG.approachLength,
-      y: approachEnd.y - dy * CONFIG.approachLength,
+    const makeEnd = (headingDeg: number, side: 'L' | 'R') => {
+      const dir = deg(headingDeg);
+      const dx = Math.cos(dir);
+      const dy = Math.sin(dir);
+      const threshold: Vec = { x: r.cx - dx * (r.length / 2), y: r.cy - dy * (r.length / 2) };
+      const finalEntry: Vec = {
+        x: threshold.x - dx * CONFIG.approachLength,
+        y: threshold.y - dy * CONFIG.approachLength,
+      };
+      return { name: runwayNumber(headingDeg) + side, dir, threshold, finalEntry };
     };
     return {
       id: i + 1,
-      name: r.name,
-      dir,
       cx: r.cx,
       cy: r.cy,
       length: r.length,
       width: 18,
-      approachEnd,
-      rollEnd,
-      finalEntry,
+      // primary end (headingDeg) + reciprocal end (headingDeg + 180, L/R swapped)
+      ends: [makeEnd(r.headingDeg, r.side), makeEnd(r.headingDeg + 180, swapSide(r.side))] as [
+        Runway['ends'][0],
+        Runway['ends'][1],
+      ],
       occupiedUntil: 0,
     };
   });
@@ -76,8 +89,10 @@ export function createGame(seed: number = CONFIG.defaultSeed): GameState {
     status: 'playing',
     aircraft: [],
     runways: buildRunways(),
+    gates: CONFIG.gates.map((g, i) => ({ id: i + 1, x: g.x, y: g.y, occupantId: null })),
     incidents: 0,
     handled: 0,
+    departed: 0,
     cash: 0,
     nearMisses: 0,
     goArounds: 0,
@@ -174,9 +189,14 @@ function makeAircraft(state: GameState): Aircraft {
     phase: 'inbound',
     waypoints: [],
     assignedRunwayId: null,
+    assignedEnd: null,
     holdCenter: null,
+    gateId: null,
+    taxiTarget: null,
+    turnaround: 0,
     age: 0,
     landTimer: 0,
+    landDecel: 0,
     conflict: false,
     conflictPartner: null,
     trail: [],
@@ -198,30 +218,51 @@ function findRunway(state: GameState, id: number): Runway | undefined {
   return state.runways.find((r) => r.id === id);
 }
 
-export function assignApproach(state: GameState, aircraftId: number, runwayId: number): boolean {
+const isAirborneArrival = (ac: Aircraft) =>
+  ac.phase === 'inbound' || ac.phase === 'holding' || ac.phase === 'approach';
+const isDispatchable = (ac: Aircraft) =>
+  ac.phase === 'readyDep' || ac.phase === 'taxiOut' || ac.phase === 'holdShort';
+
+/** Clear a plane to land on a specific END of a runway (the side the player chose). */
+export function assignApproach(state: GameState, aircraftId: number, runwayId: number, end: 0 | 1): boolean {
   const ac = findAircraft(state, aircraftId);
   const rw = findRunway(state, runwayId);
-  if (!ac || !rw || ac.phase === 'landing') return false;
+  if (!ac || !rw || !isAirborneArrival(ac)) return false;
+  const re = rw.ends[end];
   ac.phase = 'approach';
   ac.assignedRunwayId = rw.id;
+  ac.assignedEnd = end;
   ac.holdCenter = null;
-  ac.waypoints = [{ ...rw.finalEntry }, { ...rw.approachEnd }];
+  ac.waypoints = [{ ...re.finalEntry }, { ...re.threshold }];
   return true;
 }
 
-export function setPath(state: GameState, aircraftId: number, points: Vec[]): boolean {
+/** Dispatch a parked/ready plane for takeoff in a runway END's direction. */
+export function dispatchDeparture(state: GameState, aircraftId: number, runwayId: number, end: 0 | 1): boolean {
   const ac = findAircraft(state, aircraftId);
-  if (!ac || ac.phase === 'landing') return false;
-  ac.waypoints = points.map((p) => ({ ...p }));
-  ac.assignedRunwayId = null;
-  ac.holdCenter = null;
-  ac.phase = ac.waypoints.length > 0 ? 'vectoring' : 'inbound';
+  const rw = findRunway(state, runwayId);
+  if (!ac || !rw || !isDispatchable(ac)) return false;
+  freeGate(state, ac); // pushed back; the gate opens up
+  ac.assignedRunwayId = rw.id;
+  ac.assignedEnd = end;
+  ac.phase = 'taxiOut';
+  // line up at the OPPOSITE end and roll toward `end` (take off in end.dir)
+  ac.taxiTarget = { ...rw.ends[(1 - end) as 0 | 1].threshold };
   return true;
+}
+
+/** Unified "send to this runway side": land if airborne, take off if parked. */
+export function commandToRunway(state: GameState, aircraftId: number, runwayId: number, end: 0 | 1): boolean {
+  const ac = findAircraft(state, aircraftId);
+  if (!ac) return false;
+  if (isAirborneArrival(ac)) return assignApproach(state, aircraftId, runwayId, end);
+  if (isDispatchable(ac)) return dispatchDeparture(state, aircraftId, runwayId, end);
+  return false;
 }
 
 export function toggleHold(state: GameState, aircraftId: number): boolean {
   const ac = findAircraft(state, aircraftId);
-  if (!ac || ac.phase === 'landing') return false;
+  if (!ac || !isAirborneArrival(ac)) return false;
   if (ac.phase === 'holding') {
     ac.phase = 'inbound';
     ac.holdCenter = null;
@@ -232,6 +273,7 @@ export function toggleHold(state: GameState, aircraftId: number): boolean {
     };
     ac.phase = 'holding';
     ac.assignedRunwayId = null;
+    ac.assignedEnd = null;
     ac.waypoints = [];
   }
   return true;
@@ -244,50 +286,129 @@ export function toggleHold(state: GameState, aircraftId: number): boolean {
 function goAround(state: GameState, ac: Aircraft): void {
   ac.phase = 'inbound';
   ac.assignedRunwayId = null;
+  ac.assignedEnd = null;
   ac.waypoints = [];
   state.goArounds += 1;
   state.cash -= CONFIG.goAroundPenalty;
 }
 
-function attemptLanding(state: GameState, ac: Aircraft, rw: Runway): void {
-  const aligned = Math.abs(angleDiff(ac.heading, rw.dir)) <= deg(CONFIG.alignToleranceDeg);
+function attemptLanding(state: GameState, ac: Aircraft, rw: Runway, end: 0 | 1): void {
+  const re = rw.ends[end];
+  const aligned = Math.abs(angleDiff(ac.heading, re.dir)) <= deg(CONFIG.alignToleranceDeg);
   const free = state.time >= rw.occupiedUntil;
   if (free && (aligned || ac.emergency !== 'none')) {
     ac.phase = 'landing';
-    ac.heading = rw.dir;
-    ac.x = rw.approachEnd.x;
-    ac.y = rw.approachEnd.y;
-    ac.speed = ac.cruiseSpeed * CONFIG.approachSpeedFactor * 0.7;
-    ac.landTimer = CONFIG.rolloutSeconds + (ac.emergency === 'medical' ? CONFIG.medicalAssistSeconds : 0);
+    ac.heading = re.dir;
+    ac.x = re.threshold.x;
+    ac.y = re.threshold.y;
+    const v0 = ac.cruiseSpeed * CONFIG.approachSpeedFactor * 0.7;
+    ac.speed = v0;
+    // Decelerate from v0 to taxiSpeed over the full runway length (physics: vf²=v0²+2ad)
+    const vf = CONFIG.taxiSpeed;
+    const d = rw.length;
+    ac.landDecel = (v0 * v0 - vf * vf) / (2 * d); // positive magnitude; applied as subtraction
+    // Estimate rollout time for runway occupancy: t = (v0 - vf) / decel
+    const rolloutTime = (v0 - vf) / ac.landDecel;
+    const medExtra = ac.emergency === 'medical' ? CONFIG.medicalAssistSeconds : 0;
+    ac.landTimer = rolloutTime + medExtra;
     rw.occupiedUntil = state.time + ac.landTimer;
   } else if (ac.emergency === 'medical') {
     // medical can't go around — re-fly the approach (tight retry)
-    ac.waypoints = [{ ...rw.finalEntry }, { ...rw.approachEnd }];
+    ac.waypoints = [{ ...re.finalEntry }, { ...re.threshold }];
   } else {
     goAround(state, ac);
   }
 }
 
+// --- ground helpers ---
+
+function freeGate(state: GameState, ac: Aircraft): void {
+  if (ac.gateId == null) return;
+  const g = state.gates.find((gg) => gg.id === ac.gateId);
+  if (g && g.occupantId === ac.id) g.occupantId = null;
+  ac.gateId = null;
+}
+function nearestFreeGate(state: GameState, ac: Aircraft): Gate | null {
+  let best: Gate | null = null;
+  let bd = Infinity;
+  for (const g of state.gates) {
+    if (g.occupantId !== null) continue;
+    const d = dist(ac.x, ac.y, g.x, g.y);
+    if (d < bd) {
+      bd = d;
+      best = g;
+    }
+  }
+  return best;
+}
+/** A shared runway is clear for a departure only if no arrival is landing/short-final. */
+function runwayClearForDeparture(state: GameState, rw: Runway): boolean {
+  if (state.time < rw.occupiedUntil) return false;
+  for (const a of state.aircraft) {
+    if (a.assignedRunwayId !== rw.id) continue;
+    if (a.phase === 'landing') return false;
+    if (a.phase === 'approach' && a.assignedEnd != null) {
+      const th = rw.ends[a.assignedEnd].threshold;
+      if (dist(a.x, a.y, th.x, th.y) < CONFIG.shortFinalGuard) return false;
+    }
+  }
+  return true;
+}
+function groundBlockedAhead(state: GameState, ac: Aircraft): boolean {
+  for (const o of state.aircraft) {
+    if (o.id === ac.id || AIRBORNE_PHASES.includes(o.phase)) continue;
+    const dx = o.x - ac.x;
+    const dy = o.y - ac.y;
+    if (Math.hypot(dx, dy) < CONFIG.groundSeparation && dx * Math.cos(ac.heading) + dy * Math.sin(ac.heading) > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Rolled out: pay for the arrival, then head for a gate (or the ramp if full). */
+function beginTaxiIn(state: GameState, ac: Aircraft): void {
+  payForLanding(state, ac); // arrival salary + on-time bonus, handled++
+  ac.emergency = 'none'; // resolved on the ground
+  ac.assignedRunwayId = null;
+  ac.assignedEnd = null;
+  ac.phase = 'taxiIn';
+  const g = nearestFreeGate(state, ac);
+  if (g) {
+    g.occupantId = ac.id;
+    ac.gateId = g.id;
+    ac.taxiTarget = { x: g.x, y: g.y };
+  } else {
+    ac.gateId = null;
+    ac.taxiTarget = { ...CONFIG.rampWait };
+  }
+}
+
+const GROUND_ARRIVE = 9;
+
 /** Steer + advance one aircraft. Returns a disposition for the caller to act on. */
-type Disposition = 'none' | 'handled' | 'diverted';
+type Disposition = 'none' | 'diverted' | 'departed';
 
 function stepAircraft(state: GameState, ac: Aircraft, dt: number): Disposition {
   ac.age += dt;
-  if (ac.phase !== 'landing') {
+  const airborne = AIRBORNE_PHASES.includes(ac.phase);
+  if (airborne) {
     ac.fuelSeconds -= dt;
     if (ac.fuelSeconds <= CONFIG.lowFuelAt && ac.emergency === 'none') ac.emergency = 'lowFuel';
   }
 
   // --- steering (set heading) + speed target ---
   if (ac.phase === 'approach') {
-    ac.speed = ac.cruiseSpeed * CONFIG.approachSpeedFactor;
+    // Slow to half-speed on the final segment (last waypoint = threshold) for smoother capture
+    ac.speed = ac.waypoints.length <= 1
+      ? ac.cruiseSpeed * CONFIG.approachSpeedFactor * 0.6
+      : ac.cruiseSpeed * CONFIG.approachSpeedFactor;
     const wp = ac.waypoints[0];
     if (wp) ac.heading = turnToward(ac.heading, Math.atan2(wp.y - ac.y, wp.x - ac.x), ac.turnRate * dt);
-    // cosmetic descent along the corridor
     const rw = ac.assignedRunwayId != null ? findRunway(state, ac.assignedRunwayId) : undefined;
-    if (rw) {
-      const d = dist(ac.x, ac.y, rw.approachEnd.x, rw.approachEnd.y);
-      ac.altitude = Math.round(3000 * clamp01(d / CONFIG.approachLength));
+    if (rw && ac.assignedEnd != null) {
+      const th = rw.ends[ac.assignedEnd].threshold;
+      ac.altitude = Math.round(3000 * clamp01(dist(ac.x, ac.y, th.x, th.y) / CONFIG.approachLength));
     }
   } else if (ac.phase === 'holding' && ac.holdCenter) {
     const c = ac.holdCenter;
@@ -298,16 +419,23 @@ function stepAircraft(state: GameState, ac: Aircraft, dt: number): Disposition {
     else if (r > CONFIG.holdRadius * 1.15) desired += 0.4;
     ac.heading = turnToward(ac.heading, desired, ac.turnRate * dt);
     ac.speed = ac.cruiseSpeed;
-  } else if (ac.phase === 'vectoring') {
-    const wp = ac.waypoints[0];
-    if (wp) ac.heading = turnToward(ac.heading, Math.atan2(wp.y - ac.y, wp.x - ac.x), ac.turnRate * dt);
-    else ac.phase = 'inbound';
-    ac.speed = ac.cruiseSpeed;
   } else if (ac.phase === 'landing') {
-    ac.speed = Math.max(8, ac.speed - 26 * dt); // decelerate on rollout
+    ac.speed = Math.max(CONFIG.taxiSpeed, ac.speed - ac.landDecel * dt);
+  } else if (ac.phase === 'departing') {
+    ac.speed = Math.min(ac.cruiseSpeed, ac.speed + 40 * dt);
+    ac.altitude = Math.min(6000, ac.altitude + 1300 * dt);
+  } else if (ac.phase === 'takeoff') {
+    ac.speed = Math.min(ac.cruiseSpeed, ac.speed + 45 * dt);
+  } else if (ac.phase === 'taxiIn' || ac.phase === 'taxiOut') {
+    const t = ac.taxiTarget;
+    if (t) {
+      ac.heading = Math.atan2(t.y - ac.y, t.x - ac.x);
+      ac.speed = groundBlockedAhead(state, ac) ? 0 : CONFIG.taxiSpeed;
+    } else ac.speed = 0;
+  } else if (ac.phase === 'atGate' || ac.phase === 'readyDep' || ac.phase === 'holdShort') {
+    ac.speed = 0;
   } else {
-    // inbound: hold current heading
-    ac.speed = ac.cruiseSpeed;
+    ac.speed = ac.cruiseSpeed; // inbound flies straight
   }
 
   // --- advance position ---
@@ -316,35 +444,98 @@ function stepAircraft(state: GameState, ac: Aircraft, dt: number): Disposition {
   ac.px = ac.x;
   ac.py = ac.y;
 
-  // --- trail ---
-  const last = ac.trail[ac.trail.length - 1];
-  if (!last || dist(last.x, last.y, ac.x, ac.y) > 9) {
-    ac.trail.push({ x: ac.x, y: ac.y });
-    if (ac.trail.length > 16) ac.trail.shift();
+  // --- trail (air only) ---
+  if (airborne || ac.phase === 'takeoff') {
+    const last = ac.trail[ac.trail.length - 1];
+    if (!last || dist(last.x, last.y, ac.x, ac.y) > 9) {
+      ac.trail.push({ x: ac.x, y: ac.y });
+      if (ac.trail.length > 16) ac.trail.shift();
+    }
+  } else if (ac.trail.length) {
+    ac.trail.length = 0;
   }
 
-  // --- post-move: landing rollout, waypoint capture, diversion ---
+  // --- post-move transitions ---
   if (ac.phase === 'landing') {
     ac.landTimer -= dt;
-    if (ac.landTimer <= 0) return 'handled';
+    // Exit when aircraft reaches the far end of the runway (position-based)
+    if (ac.assignedRunwayId != null && ac.assignedEnd != null) {
+      const rw = findRunway(state, ac.assignedRunwayId);
+      if (rw) {
+        const farEnd = rw.ends[(1 - ac.assignedEnd) as 0 | 1].threshold;
+        if (dist(ac.x, ac.y, farEnd.x, farEnd.y) < 20) {
+          beginTaxiIn(state, ac);
+          return 'none';
+        }
+      }
+    }
+    // Fallback: timer (handles edge cases like medical-extended occupancy)
+    if (ac.landTimer <= 0) beginTaxiIn(state, ac);
+    return 'none';
+  }
+  if (ac.phase === 'takeoff') {
+    ac.landTimer -= dt;
+    if (ac.landTimer <= 0) ac.phase = 'departing';
+    return 'none';
+  }
+  if (ac.phase === 'atGate') {
+    ac.turnaround -= dt;
+    if (ac.turnaround <= 0) {
+      ac.phase = 'readyDep';
+      ac.fuelSeconds = CONFIG.fuelSecondsStart; // refuelled at the gate
+    }
+    return 'none';
+  }
+  if (ac.phase === 'holdShort' && ac.assignedRunwayId != null && ac.assignedEnd != null) {
+    const rw = findRunway(state, ac.assignedRunwayId);
+    if (rw && runwayClearForDeparture(state, rw)) {
+      const re = rw.ends[ac.assignedEnd];
+      ac.phase = 'takeoff';
+      ac.heading = re.dir;
+      ac.speed = 16;
+      ac.landTimer = CONFIG.takeoffRollSeconds;
+      rw.occupiedUntil = state.time + CONFIG.takeoffRollSeconds;
+    }
+    return 'none';
+  }
+  if ((ac.phase === 'taxiIn' || ac.phase === 'taxiOut') && ac.taxiTarget) {
+    if (dist(ac.x, ac.y, ac.taxiTarget.x, ac.taxiTarget.y) < GROUND_ARRIVE) {
+      if (ac.phase === 'taxiOut') {
+        ac.phase = 'holdShort';
+        ac.taxiTarget = null;
+      } else if (ac.gateId != null) {
+        ac.phase = 'atGate';
+        ac.turnaround = CONFIG.turnaroundSeconds;
+        ac.taxiTarget = null;
+      } else {
+        // idling on the ramp — grab a gate as soon as one opens
+        const g = nearestFreeGate(state, ac);
+        if (g) {
+          g.occupantId = ac.id;
+          ac.gateId = g.id;
+          ac.taxiTarget = { x: g.x, y: g.y };
+        }
+      }
+    }
     return 'none';
   }
 
+  // approach: waypoint capture -> landing attempt
+  // Use a larger capture radius for the threshold (final waypoint) to prevent overshoots
   const wp = ac.waypoints[0];
-  if (wp && dist(ac.x, ac.y, wp.x, wp.y) < CONFIG.arriveRadius) {
+  const captureR = (ac.phase === 'approach' && ac.waypoints.length === 1) ? 40 : CONFIG.arriveRadius;
+  if (wp && dist(ac.x, ac.y, wp.x, wp.y) < captureR) {
     ac.waypoints.shift();
-    if (ac.waypoints.length === 0 && ac.phase === 'approach' && ac.assignedRunwayId != null) {
+    if (ac.waypoints.length === 0 && ac.phase === 'approach' && ac.assignedRunwayId != null && ac.assignedEnd != null) {
       const rw = findRunway(state, ac.assignedRunwayId);
-      if (rw) attemptLanding(state, ac, rw);
+      if (rw) attemptLanding(state, ac, rw, ac.assignedEnd);
     }
   }
 
-  if (
-    ac.age > 2 &&
-    (ac.x < -32 || ac.x > CONFIG.worldW + 32 || ac.y < -32 || ac.y > CONFIG.worldH + 32)
-  ) {
-    return 'diverted';
-  }
+  // airspace exits: a climbing departure leaves successfully; an unmanaged arrival diverts
+  const off = ac.x < -32 || ac.x > CONFIG.worldW + 32 || ac.y < -32 || ac.y > CONFIG.worldH + 32;
+  if (off && ac.phase === 'departing') return 'departed';
+  if (off && ac.phase === 'inbound' && ac.age > 2) return 'diverted';
   return 'none';
 }
 
@@ -414,14 +605,15 @@ export function update(state: GameState, dt: number): void {
   const remove = new Set<number>();
   for (const ac of state.aircraft) {
     const d = stepAircraft(state, ac, dt);
-    if (d === 'handled') {
-      payForLanding(state, ac);
+    if (d === 'departed') {
+      state.cash += CONFIG.departureSalary;
+      state.departed += 1;
       remove.add(ac.id);
     } else if (d === 'diverted') {
       state.diversions += 1;
       state.cash -= CONFIG.diversionPenalty;
       remove.add(ac.id);
-    } else if (ac.fuelSeconds <= 0 && ac.phase !== 'landing') {
+    } else if (ac.fuelSeconds <= 0 && AIRBORNE_PHASES.includes(ac.phase)) {
       state.incidents += 1;
       state.cash -= CONFIG.crashPenalty;
       state.crashFx.push({ x: ac.x, y: ac.y, ttl: 1.5 });
@@ -429,12 +621,12 @@ export function update(state: GameState, dt: number): void {
     }
   }
 
-  // --- separation / conflict / collisions ---
+  // --- separation / conflict / collisions (airborne traffic only) ---
   for (const ac of state.aircraft) {
     ac.conflict = false;
     ac.conflictPartner = null;
   }
-  const airborne = state.aircraft.filter((a) => a.phase !== 'landing' && !remove.has(a.id));
+  const airborne = state.aircraft.filter((a) => AIRBORNE_PHASES.includes(a.phase) && !remove.has(a.id));
   const next = new Map<string, number>();
   const crashPairs: [Aircraft, Aircraft][] = [];
   for (let i = 0; i < airborne.length; i++) {

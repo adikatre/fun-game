@@ -1,11 +1,51 @@
-# Final Approach — prototype report (air-core v1)
+# Final Approach — prototype report
 
 > This pivots the earlier transit prototype (which felt low-stakes — "just
 > connecting shapes") into an ATC game, to test whether the **real-time-with-pause
 > loop feels tense and fun when the stakes are real**: crashes, fuel, your job.
 > The transit prototype and its report are preserved under `prototypes/transit/`.
 
-## TL;DR
+## Update log (newest first)
+
+**Ground control layer + bidirectional runways.** Two additions on top of the
+air-core v1 below:
+
+1. **Bidirectional runways** — each strip is landable (and now departable) from
+   *either* end (four approach corridors: 27L/27R + 09R/09L). You pick the side by
+   dragging the plane to it. This alone made the auto-controller *better* (planes
+   approach from whichever side they're already on — fewer U-turns: handled 8→17 in
+   the 600 s bot run).
+2. **Ground control** — landed arrivals taxi to a **gate**, run a **turnaround**
+   (refuel/board), then go **ready to depart**; the player dispatches them by
+   dragging to a runway side, and they taxi out, hold short, take off, and climb away
+   for a payout. **Landings and takeoffs share the same two runways**, so you now
+   sequence two streams over one resource — the core new tension.
+
+What this did to the game (auto-controller, seed 7):
+
+```
+ t(s)  landed  departed  cash      (air-core only, for comparison: by 160s ~$1,120, 0 dep)
+   60     3        1     $534
+  100     5        3     $1,063
+  140     7        5     $1,636   <- departures roughly double the revenue per plane
+```
+
+- **Economy deepened**: each plane can earn twice (a landing *and* a departure), and
+  the curve climbs faster — more reward, and a real reason to keep gates cycling.
+- **Difficulty rose, as intended**: sharing runways between landings and takeoffs is
+  a genuine squeeze, so the naive bot now gets fired ~3 min in (vs ~5.8 with
+  arrivals only). A human juggling both streams with pause + sequencing is the test.
+- **Determinism still PASS**; per-step cost rose to ~**0.0025 ms/step** loaded (the
+  O(n²) ground-spacing check) — still ~0.15 ms CPU per real second, 60 fps untouched.
+- **15/15 full-stack smoke checks pass**, including a full
+  land → taxi → turnaround → dispatch → takeoff cycle and bidirectional-end assigns.
+- **Deferred next**: a real taxiway network + manual taxi routing + runway-crossing
+  conflicts (taxi is currently auto-routed straight-line; the terminal sits between
+  the runways so nothing crosses an active strip).
+
+---
+
+## TL;DR (air-core v1)
 
 - **Built:** the agreed **air-core v1** — arrivals, two runways with approach
   corridors, separation conflicts, fuel + low-fuel/medical emergencies, the traffic

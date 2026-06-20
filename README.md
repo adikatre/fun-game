@@ -35,11 +35,10 @@ npm run smoke      # runs real render/input/main against a stubbed DOM (no brows
 
 | Input | Action |
 | --- | --- |
-| **Click a plane → click a runway** | Clear it to land (auto-routed onto that final) |
-| **Drag from a plane** | Draw a custom path / vector it |
-| **Click a plane → click empty space** | Vector toward that point |
-| **Right-click a plane** | Enter / leave a holding orbit |
-| **Space** | Pause / resume — **you can still vector, clear, and hold while paused** |
+| **Drag a plane to a runway side** | If airborne: clear it to land from that end. If it's a **ready (cyan) departure** parked at a gate: launch it (takeoff in that direction). Each runway works **both** directions — drag to the side you want |
+| **Click a plane, then click a runway side** | Same, as two clicks |
+| **Right-click a plane** | Enter / leave a holding orbit (airborne only) |
+| **Space** | Pause / resume — **you can still clear, dispatch, and hold while paused** |
 | **R** | Start a new shift (same seed) |
 
 CrazyGames key rules respected: pause is on `Space`; `Escape` and `Ctrl/Cmd+W` are
@@ -48,8 +47,9 @@ that auto-clears inbound traffic so a fresh load shows a live, landing airport.
 
 ## What's in it
 
-- **Two runways** with final-approach corridors; one aircraft per runway at a time
-  (rollout occupancy).
+- **Two runways, each landable from either end** (four approach corridors total);
+  the whole strip is occupied during a landing, so opposite-end approaches can't
+  run simultaneously. You choose the approach side per plane.
 - **Aircraft** in three types (small / medium / heavy) differing in speed, turn
   rate, and wake separation — all rendered as radar blips with callsign data blocks,
   heading-prediction vectors, and trails.
@@ -64,6 +64,19 @@ that auto-clears inbound traffic so a fresh load shows a live, landing airport.
   go-arounds, near-misses, diversions; a crash is brutal.
 - **Difficulty ramp**: calm onboarding from the approach side, widening to all
   directions, faster arrivals, more heavies, then periodic **rush waves**.
+
+### Ground control (the second board)
+
+- **Gates** at a terminal between the runways. A landed arrival **taxis to a free
+  gate** (or idles on the ramp if they're all full), runs a **turnaround**
+  (deplane / refuel / board), and then goes **ready to depart** (cyan, pulsing).
+- **Departures**: drag a ready plane to a runway side to dispatch it — it taxis to
+  the hold-short, waits for the strip to be **clear** (it won't roll into a
+  landing), takes off in that direction, climbs out, and leaves the airspace for a
+  payout.
+- **The whole runway is shared** by landings *and* takeoffs from both ends, so you're
+  now sequencing two streams over the same two strips — the core new tension. Ground
+  traffic isn't subject to air separation; a climbing departure is.
 
 ## Architecture
 
@@ -94,9 +107,14 @@ prototypes/
 - **Pause-to-replan:** sim time freezes while all commands stay live; resume is
   seamless (the renderer interpolates from a per-tick snapshot).
 
-## v1 scope (and what's deliberately deferred)
+## Scope (and what's deliberately deferred)
 
-This build is **air-only**: arrivals, runways, separation, fuel, emergencies, ramp.
-Deferred to later layers (per the agreed plan): **ground operations** —
-departures, pushback, taxi routing, gates, runway crossings, refuel/load. Also out:
-typed ATC-language commands, weather, multiple airports, and meta-progression.
+Implemented: the air core (arrivals, bidirectional runways, separation, fuel,
+emergencies, ramp) **plus the ground-control layer** (gates, taxi-in, turnaround,
+departures, takeoffs, shared-runway contention).
+
+Still deferred (next increments): a real **taxiway network** with manual taxi
+routing and **runway-crossing conflicts** (the current taxi is auto-routed
+straight-line and the terminal sits between the runways so nothing has to cross an
+active strip); plus typed ATC-language commands, weather, multiple airports, and
+meta-progression.

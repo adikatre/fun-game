@@ -5,7 +5,7 @@ import { CONFIG } from './config';
 import { createInput } from './input';
 import { render } from './render';
 import { sdk } from './sdk';
-import { assignApproach, createGame, update } from './sim';
+import { commandToRunway, createGame, update } from './sim';
 import type { GameState, Viewport } from './types';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -60,10 +60,14 @@ const autoplay = new URLSearchParams(location.search).has('autoplay');
 function runAutoplay(): void {
   if (state.status !== 'playing') return;
   for (const ac of state.aircraft) {
-    if (ac.phase === 'inbound' && ac.assignedRunwayId == null) {
-      const rw = [...state.runways].sort((a, b) => a.occupiedUntil - b.occupiedUntil)[0];
-      if (rw) assignApproach(state, ac.id, rw.id);
-    }
+    const wantsRunway = ac.phase === 'inbound' || ac.phase === 'readyDep';
+    if (!wantsRunway) continue;
+    const rw = [...state.runways].sort((a, b) => a.occupiedUntil - b.occupiedUntil)[0];
+    if (!rw) continue;
+    // pick the end nearest the plane (its current side)
+    const d0 = Math.hypot(ac.x - rw.ends[0].finalEntry.x, ac.y - rw.ends[0].finalEntry.y);
+    const d1 = Math.hypot(ac.x - rw.ends[1].finalEntry.x, ac.y - rw.ends[1].finalEntry.y);
+    commandToRunway(state, ac.id, rw.id, d0 <= d1 ? 0 : 1);
   }
 }
 

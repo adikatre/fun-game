@@ -1,12 +1,11 @@
 // input.ts — translates mouse/keyboard into player actions on the sim.
 // Never advances time; only issues commands (legal while paused) and produces
-// RenderHints. Click a plane then a runway = clear to land; drag from a plane =
-// vector it; right-click = hold; Space = pause; R = new shift.
+// RenderHints. Drag a plane onto a runway side (or click a plane, then click the
+// side) to clear it to land from that end; right-click = hold; Space = pause; R.
 
-import { CONFIG } from './config';
-import { assignApproach, restart, setPath, toggleHold } from './sim';
+import { commandToRunway, restart, toggleHold } from './sim';
 import { sdk } from './sdk';
-import type { Aircraft, GameState, RenderHints, Runway, Vec, Viewport } from './types';
+import type { Aircraft, GameState, RenderHints, Vec, Viewport } from './types';
 
 export interface InputContext {
   canvas: HTMLCanvasElement;
@@ -37,11 +36,9 @@ export function createInput(ctx: InputContext): InputController {
   let pointerWorld: Vec | null = null;
   let selectedId: number | null = null;
 
-  // drag state
   let downPlaneId: number | null = null;
   let downWorld: Vec | null = null;
   let dragging = false;
-  let dragPoints: Vec[] = [];
 
   const toScreen = (e: MouseEvent): Vec => {
     const r = canvas.getBoundingClientRect();
@@ -55,7 +52,7 @@ export function createInput(ctx: InputContext): InputController {
   function planeAt(world: Vec): Aircraft | null {
     const state = getState();
     let best: Aircraft | null = null;
-    let bestD: number = CONFIG.planeHitRadius;
+    let bestD = 22;
     for (const a of state.aircraft) {
       const d = Math.hypot(a.x - world.x, a.y - world.y);
       if (d <= bestD) {
@@ -65,20 +62,31 @@ export function createInput(ctx: InputContext): InputController {
     }
     return best;
   }
-  function runwayAt(world: Vec): Runway | null {
+
+  /** Which runway + end the point targets (nearest approach line; end by nearer corridor). */
+  function runwayEndAt(world: Vec): { runwayId: number; end: 0 | 1 } | null {
     const state = getState();
-    let best: Runway | null = null;
-    let bestD = 36;
+    let bestRw: GameState['runways'][number] | null = null;
+    let bestD = 38;
     for (const r of state.runways) {
-      const dStrip = distToSeg(world.x, world.y, r.approachEnd.x, r.approachEnd.y, r.rollEnd.x, r.rollEnd.y);
-      const dCorr = distToSeg(world.x, world.y, r.approachEnd.x, r.approachEnd.y, r.finalEntry.x, r.finalEntry.y);
-      const d = Math.min(dStrip, dCorr);
+      // the whole approach line passes through both corridors + the strip
+      const d = distToSeg(
+        world.x,
+        world.y,
+        r.ends[0].finalEntry.x,
+        r.ends[0].finalEntry.y,
+        r.ends[1].finalEntry.x,
+        r.ends[1].finalEntry.y,
+      );
       if (d < bestD) {
         bestD = d;
-        best = r;
+        bestRw = r;
       }
     }
-    return best;
+    if (!bestRw) return null;
+    const d0 = Math.hypot(world.x - bestRw.ends[0].finalEntry.x, world.y - bestRw.ends[0].finalEntry.y);
+    const d1 = Math.hypot(world.x - bestRw.ends[1].finalEntry.x, world.y - bestRw.ends[1].finalEntry.y);
+    return { runwayId: bestRw.id, end: d0 <= d1 ? 0 : 1 };
   }
 
   function validSelected(): number | null {
@@ -90,7 +98,7 @@ export function createInput(ctx: InputContext): InputController {
   function onMouseDown(e: MouseEvent): void {
     pointerScreen = toScreen(e);
     pointerWorld = screenToWorld(pointerScreen);
-    if (e.button === 2) return; // contextmenu handles right-click
+    if (e.button === 2) return;
     const state = getState();
     if (state.status === 'gameover') return;
 
@@ -99,16 +107,14 @@ export function createInput(ctx: InputContext): InputController {
       downPlaneId = plane.id;
       downWorld = pointerWorld;
       dragging = false;
-      dragPoints = [];
       return;
     }
 
-    // empty / runway click — acts on the current selection
+    // empty / runway click acts on the current selection
     const sel = validSelected();
     if (sel != null) {
-      const rw = runwayAt(pointerWorld);
-      if (rw) assignApproach(state, sel, rw.id);
-      else setPath(state, sel, [pointerWorld]);
+      const re = runwayEndAt(pointerWorld);
+      if (re) commandToRunway(state, sel, re.runwayId, re.end);
     } else {
       selectedId = null;
     }
@@ -117,16 +123,8 @@ export function createInput(ctx: InputContext): InputController {
   function onMouseMove(e: MouseEvent): void {
     pointerScreen = toScreen(e);
     pointerWorld = screenToWorld(pointerScreen);
-    if (downPlaneId != null && downWorld) {
-      if (!dragging && Math.hypot(pointerWorld.x - downWorld.x, pointerWorld.y - downWorld.y) > 9) {
-        dragging = true;
-      }
-      if (dragging) {
-        const last = dragPoints[dragPoints.length - 1];
-        if (!last || Math.hypot(pointerWorld.x - last.x, pointerWorld.y - last.y) > CONFIG.pathSampleDist) {
-          dragPoints.push({ ...pointerWorld });
-        }
-      }
+    if (downPlaneId != null && downWorld && !dragging) {
+      if (Math.hypot(pointerWorld.x - downWorld.x, pointerWorld.y - downWorld.y) > 9) dragging = true;
     }
   }
 
@@ -137,21 +135,18 @@ export function createInput(ctx: InputContext): InputController {
 
     if (downPlaneId != null) {
       const state = getState();
-      if (dragging && dragPoints.length > 0) {
-        // drag released: onto a runway => clear to land; else => vector along the path
-        const rw = runwayAt(pointerWorld);
-        if (rw) assignApproach(state, downPlaneId, rw.id);
-        else setPath(state, downPlaneId, dragPoints);
+      if (dragging) {
+        // released on a runway side => land (if airborne) or take off (if parked)
+        const re = runwayEndAt(pointerWorld);
+        if (re) commandToRunway(state, downPlaneId, re.runwayId, re.end);
         selectedId = downPlaneId;
       } else {
-        // a click (no drag) selects the plane
-        selectedId = downPlaneId;
+        selectedId = downPlaneId; // a click selects
       }
     }
     downPlaneId = null;
     downWorld = null;
     dragging = false;
-    dragPoints = [];
   }
 
   function onContextMenu(e: MouseEvent): void {
@@ -187,26 +182,31 @@ export function createInput(ctx: InputContext): InputController {
     const state = getState();
     let hoverAircraftId: number | null = null;
     let hoverRunwayId: number | null = null;
+    let hoverEnd: 0 | 1 | null = null;
     let drag: RenderHints['drag'] = null;
 
     if (pointerWorld && state.status === 'playing') {
       const hp = planeAt(pointerWorld);
       hoverAircraftId = hp ? hp.id : null;
-      const hr = runwayAt(pointerWorld);
-      hoverRunwayId = hr ? hr.id : null;
+      const re = runwayEndAt(pointerWorld);
+      hoverRunwayId = re ? re.runwayId : null;
+      hoverEnd = re ? re.end : null;
 
-      if (dragging && downPlaneId != null && dragPoints.length > 0) {
-        const rw = runwayAt(pointerWorld);
+      if (dragging && downPlaneId != null) {
+        const endName =
+          re != null ? state.runways.find((r) => r.id === re.runwayId)?.ends[re.end].name ?? null : null;
         drag = {
           fromAircraftId: downPlaneId,
-          points: [...dragPoints, pointerWorld],
-          snapRunwayId: rw ? rw.id : null,
-          valid: true,
+          toX: pointerWorld.x,
+          toY: pointerWorld.y,
+          targetRunwayId: re ? re.runwayId : null,
+          targetEnd: re ? re.end : null,
+          endName,
         };
       }
     }
 
-    return { pointerWorld, hoverAircraftId, hoverRunwayId, selectedAircraftId: validSelected(), drag };
+    return { pointerWorld, hoverAircraftId, hoverRunwayId, hoverEnd, selectedAircraftId: validSelected(), drag };
   }
 
   canvas.addEventListener('mousedown', onMouseDown);

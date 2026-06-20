@@ -2,6 +2,7 @@
 // Aircraft motion is interpolated between sim ticks via `alpha`.
 
 import { CONFIG, PALETTE } from './config';
+import { AIRBORNE_PHASES } from './types';
 import type { Aircraft, GameState, RenderHints, Runway, Vec, Viewport } from './types';
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -39,9 +40,8 @@ export function render(
   ctx.translate(vp.offsetX, vp.offsetY);
   ctx.scale(vp.scale, vp.scale);
 
-  drawRangeRings(ctx, state);
-  drawSweep(ctx, state);
   for (const rw of state.runways) drawRunway(ctx, rw, state, hints);
+  drawGates(ctx, state);
   drawSelectedPath(ctx, state, hints);
   drawDragPreview(ctx, state, hints);
   for (const ac of state.aircraft) drawTrailAndVector(ctx, ac, alpha);
@@ -82,69 +82,50 @@ function drawVignette(ctx: CanvasRenderingContext2D, vp: Viewport): void {
   ctx.fillRect(0, 0, vp.cssW, vp.cssH);
 }
 
-function drawRangeRings(ctx: CanvasRenderingContext2D, state: GameState): void {
-  void state;
-  ctx.strokeStyle = PALETTE.ring;
-  ctx.lineWidth = 1.5;
-  for (const r of [120, 240, 360, 480]) {
-    ctx.beginPath();
-    ctx.arc(CONFIG.airportX, CONFIG.airportY, r, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-  // crosshair
-  ctx.beginPath();
-  ctx.moveTo(CONFIG.airportX - 8, CONFIG.airportY);
-  ctx.lineTo(CONFIG.airportX + 8, CONFIG.airportY);
-  ctx.moveTo(CONFIG.airportX, CONFIG.airportY - 8);
-  ctx.lineTo(CONFIG.airportX, CONFIG.airportY + 8);
-  ctx.stroke();
-}
-
-function drawSweep(ctx: CanvasRenderingContext2D, state: GameState): void {
-  const ang = (state.time * 0.55) % (Math.PI * 2);
-  const R = 520;
-  const g = ctx.createRadialGradient(CONFIG.airportX, CONFIG.airportY, 0, CONFIG.airportX, CONFIG.airportY, R);
-  g.addColorStop(0, 'rgba(95,224,138,0.0)');
-  g.addColorStop(1, PALETTE.sweep);
-  ctx.save();
-  ctx.translate(CONFIG.airportX, CONFIG.airportY);
-  ctx.rotate(ang);
-  ctx.beginPath();
-  ctx.moveTo(0, 0);
-  ctx.arc(0, 0, R, -0.38, 0);
-  ctx.closePath();
-  ctx.fillStyle = g;
-  ctx.fill();
-  ctx.restore();
-}
 
 function drawRunway(ctx: CanvasRenderingContext2D, rw: Runway, state: GameState, hints: RenderHints): void {
   const busy = state.time < rw.occupiedUntil;
-  const highlight = hints.hoverRunwayId === rw.id || hints.drag?.snapRunwayId === rw.id;
 
-  // approach corridor (dashed) from approachEnd back to finalEntry
-  ctx.save();
-  ctx.setLineDash([4, 9]);
-  ctx.lineWidth = highlight ? 3 : 2;
-  ctx.strokeStyle = highlight ? PALETTE.selected : busy ? PALETTE.corridorBusy : PALETTE.corridorFree;
-  ctx.beginPath();
-  ctx.moveTo(rw.approachEnd.x, rw.approachEnd.y);
-  ctx.lineTo(rw.finalEntry.x, rw.finalEntry.y);
-  ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.restore();
+  // both approach corridors (dashed), each from its threshold out to its finalEntry
+  for (let e = 0; e < 2; e++) {
+    const end = rw.ends[e];
+    const targeted =
+      (hints.hoverRunwayId === rw.id && hints.hoverEnd === e) ||
+      (hints.drag?.targetRunwayId === rw.id && hints.drag?.targetEnd === e);
+    ctx.save();
+    ctx.setLineDash([4, 9]);
+    ctx.lineWidth = targeted ? 3.5 : 2;
+    ctx.strokeStyle = targeted ? PALETTE.selected : busy ? PALETTE.corridorBusy : PALETTE.corridorFree;
+    ctx.beginPath();
+    ctx.moveTo(end.threshold.x, end.threshold.y);
+    ctx.lineTo(end.finalEntry.x, end.finalEntry.y);
+    ctx.stroke();
+    // arrowhead at the threshold pointing the landing direction
+    ctx.setLineDash([]);
+    if (targeted) {
+      const a = end.dir;
+      ctx.beginPath();
+      ctx.moveTo(end.threshold.x, end.threshold.y);
+      ctx.lineTo(end.threshold.x - Math.cos(a - 0.4) * 12, end.threshold.y - Math.sin(a - 0.4) * 12);
+      ctx.moveTo(end.threshold.x, end.threshold.y);
+      ctx.lineTo(end.threshold.x - Math.cos(a + 0.4) * 12, end.threshold.y - Math.sin(a + 0.4) * 12);
+      ctx.strokeStyle = PALETTE.selected;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
 
   // runway strip
   ctx.save();
   ctx.translate(rw.cx, rw.cy);
-  ctx.rotate(rw.dir);
+  ctx.rotate(rw.ends[0].dir);
   roundRectPath(ctx, -rw.length / 2, -rw.width / 2, rw.length, rw.width, 3);
   ctx.fillStyle = PALETTE.runway;
   ctx.fill();
   ctx.lineWidth = 1.5;
   ctx.strokeStyle = busy ? PALETTE.corridorBusy : PALETTE.runwayEdge;
   ctx.stroke();
-  // centerline dashes
   ctx.setLineDash([8, 7]);
   ctx.strokeStyle = 'rgba(220,243,230,0.45)';
   ctx.lineWidth = 1.5;
@@ -155,12 +136,14 @@ function drawRunway(ctx: CanvasRenderingContext2D, rw: Runway, state: GameState,
   ctx.setLineDash([]);
   ctx.restore();
 
-  // label near the approach end
-  ctx.fillStyle = busy ? PALETTE.warn : PALETTE.ringText;
-  ctx.font = '700 13px ui-monospace, Menlo, monospace';
+  // a label at each end (offset outward, beside its threshold)
+  ctx.font = '700 12px ui-monospace, Menlo, monospace';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(rw.name, rw.approachEnd.x + 18, rw.approachEnd.y - 14);
+  for (const end of rw.ends) {
+    ctx.fillStyle = busy ? PALETTE.warn : PALETTE.ringText;
+    ctx.fillText(end.name, end.threshold.x + Math.cos(end.dir + Math.PI) * 16, end.threshold.y - 14);
+  }
 }
 
 function drawSelectedPath(ctx: CanvasRenderingContext2D, state: GameState, hints: RenderHints): void {
@@ -182,22 +165,71 @@ function drawSelectedPath(ctx: CanvasRenderingContext2D, state: GameState, hints
 
 function drawDragPreview(ctx: CanvasRenderingContext2D, state: GameState, hints: RenderHints): void {
   const drag = hints.drag;
-  if (!drag || drag.points.length === 0) return;
+  if (!drag) return;
   const ac = state.aircraft.find((a) => a.id === drag.fromAircraftId);
   if (!ac) return;
+  const onTarget = drag.targetRunwayId != null;
   ctx.save();
   ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.strokeStyle = drag.snapRunwayId != null ? PALETTE.blip : 'rgba(233,247,238,0.75)';
-  ctx.lineWidth = drag.snapRunwayId != null ? 3 : 2.5;
+  ctx.setLineDash([2, 7]);
+  ctx.strokeStyle = onTarget ? PALETTE.blip : 'rgba(233,247,238,0.6)';
+  ctx.lineWidth = onTarget ? 3 : 2;
   ctx.beginPath();
   ctx.moveTo(ac.x, ac.y);
-  for (const p of drag.points) ctx.lineTo(p.x, p.y);
+  ctx.lineTo(drag.toX, drag.toY);
   ctx.stroke();
+  ctx.setLineDash([]);
+  // label which end it will land on, near the cursor
+  if (onTarget && drag.endName) {
+    ctx.fillStyle = PALETTE.blip;
+    ctx.font = '700 13px ui-monospace, monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`LAND ${drag.endName}`, drag.toX + 12, drag.toY - 12);
+  }
   ctx.restore();
 }
 
+function drawGates(ctx: CanvasRenderingContext2D, state: GameState): void {
+  // terminal backdrop
+  const gs = state.gates;
+  if (gs.length) {
+    const minX = Math.min(...gs.map((g) => g.x)) - 16;
+    const maxX = Math.max(...gs.map((g) => g.x)) + 16;
+    const gy = gs[0].y;
+    roundRectPath(ctx, minX, gy - 13, maxX - minX, 26, 5);
+    ctx.fillStyle = 'rgba(40,50,46,0.55)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(103,232,160,0.18)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+  for (const g of state.gates) {
+    const occ = g.occupantId != null ? state.aircraft.find((a) => a.id === g.occupantId) : undefined;
+    const ready = occ?.phase === 'readyDep';
+    ctx.beginPath();
+    ctx.rect(g.x - 6, g.y - 6, 12, 12);
+    ctx.fillStyle = ready ? PALETTE.gateReady : occ ? PALETTE.gateBusy : PALETTE.gateFree;
+    ctx.globalAlpha = occ ? 0.5 : 0.3;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = ready ? PALETTE.gateReady : occ ? PALETTE.gateBusy : 'rgba(103,232,160,0.3)';
+    ctx.stroke();
+    // turnaround progress arc
+    if (occ && occ.phase === 'atGate') {
+      const frac = 1 - occ.turnaround / CONFIG.turnaroundSeconds;
+      ctx.beginPath();
+      ctx.arc(g.x, g.y, 11, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+      ctx.strokeStyle = PALETTE.gateBusy;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+  }
+}
+
 function drawTrailAndVector(ctx: CanvasRenderingContext2D, ac: Aircraft, alpha: number): void {
+  if (!AIRBORNE_PHASES.includes(ac.phase)) return; // no trail/vector for ground traffic
   // trail
   for (let i = 0; i < ac.trail.length; i++) {
     const a = (i / ac.trail.length) * 0.5;
@@ -232,13 +264,16 @@ function drawAircraft(
   const emerg = ac.emergency !== 'none';
   const pulse = 0.5 + 0.5 * Math.sin(state.time * 6);
 
+  const isDep = ac.phase === 'taxiOut' || ac.phase === 'holdShort' || ac.phase === 'takeoff' || ac.phase === 'departing' || ac.phase === 'readyDep';
+  const isGroundArrival = ac.phase === 'landing' || ac.phase === 'taxiIn' || ac.phase === 'atGate';
   let color: string = PALETTE.blip;
   if (ac.conflict) color = PALETTE.danger;
   else if (ac.emergency === 'medical') color = PALETTE.danger;
   else if (ac.emergency === 'lowFuel') color = PALETTE.warn;
-  else if (ac.phase === 'landing') color = PALETTE.blipDim;
+  else if (isDep) color = PALETTE.departure;
+  else if (isGroundArrival) color = PALETTE.blipDim;
 
-  // selection / emergency ring
+  // selection / emergency / ready-to-depart ring
   if (selected || hover) {
     ctx.strokeStyle = PALETTE.selected;
     ctx.lineWidth = 1.5;
@@ -252,6 +287,15 @@ function drawAircraft(
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.arc(x, y, 20, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  } else if (ac.phase === 'readyDep') {
+    // pulse to signal "dispatch me"
+    ctx.strokeStyle = PALETTE.gateReady;
+    ctx.globalAlpha = 0.35 + 0.55 * pulse;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(x, y, 14, 0, Math.PI * 2);
     ctx.stroke();
     ctx.globalAlpha = 1;
   }
@@ -364,7 +408,7 @@ function drawHud(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewport):
   ctx.fillText(`$${state.cash}`, 18, 50);
   ctx.fillStyle = PALETTE.textDim;
   ctx.font = '600 12px ui-monospace, monospace';
-  ctx.fillText(`${state.handled} landed`, 150, 50);
+  ctx.fillText(`${state.handled} landed · ${state.departed} departed`, 150, 50);
 
   // clock (center)
   ctx.textAlign = 'center';
@@ -397,7 +441,7 @@ function drawHud(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewport):
 
 function drawInboundStrip(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewport, hints: RenderHints): void {
   const rows = [...state.aircraft]
-    .filter((a) => a.phase !== 'landing')
+    .filter((a) => a.phase === 'inbound' || a.phase === 'holding' || a.phase === 'approach')
     .sort((a, b) => a.fuelSeconds - b.fuelSeconds)
     .slice(0, 11);
   if (rows.length === 0) return;
@@ -421,11 +465,15 @@ function drawInboundStrip(ctx: CanvasRenderingContext2D, state: GameState, vp: V
     ctx.fillText(ac.callsign, x + 8, y + rh / 2 - 1);
 
     // status
+    const approachEndName =
+      ac.assignedRunwayId != null && ac.assignedEnd != null
+        ? state.runways.find((r) => r.id === ac.assignedRunwayId)?.ends[ac.assignedEnd].name ?? ''
+        : '';
     const status =
       ac.emergency === 'medical'
         ? 'MAYDAY'
         : ac.phase === 'approach'
-          ? `ILS ${state.runways.find((r) => r.id === ac.assignedRunwayId)?.name ?? ''}`
+          ? `ILS ${approachEndName}`
           : ac.phase === 'holding'
             ? 'HOLD'
             : ac.emergency === 'lowFuel'
@@ -445,10 +493,10 @@ function drawInboundStrip(ctx: CanvasRenderingContext2D, state: GameState, vp: V
 
 function drawHelp(ctx: CanvasRenderingContext2D, vp: Viewport): void {
   const lines = [
-    'Click plane → click runway: land',
-    'Drag from plane: vector it',
-    'Right-click plane: hold',
-    'Space: pause/replan   ·   R: new shift',
+    'Drag a plane to a runway side: land / take off there',
+    'Landed planes taxi to a gate, turn around, go cyan = ready',
+    'Drag a ready (cyan) plane to a runway to launch it',
+    'Right-click: hold  ·  Space: pause/replan  ·  R: new shift',
   ];
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
@@ -487,10 +535,10 @@ function drawHint(ctx: CanvasRenderingContext2D, vp: Viewport): void {
   ctx.fillText('TOWER — your shift starts now', vp.cssW / 2, y + 26);
   ctx.fillStyle = PALETTE.text;
   ctx.font = '500 13px -apple-system, sans-serif';
-  ctx.fillText('Click a plane, then click a runway to clear it to land.', vp.cssW / 2, y + 50);
+  ctx.fillText('Drag a plane to the side of a runway you want it to land on.', vp.cssW / 2, y + 50);
   ctx.fillStyle = PALETTE.textDim;
   ctx.font = '500 12px -apple-system, sans-serif';
-  ctx.fillText('Drag from a plane to steer it · keep planes apart · don’t run them out of fuel.', vp.cssW / 2, y + 70);
+  ctx.fillText('Each runway takes traffic from both ends · keep planes apart · don’t run them out of fuel.', vp.cssW / 2, y + 70);
 }
 
 function drawPausedBanner(ctx: CanvasRenderingContext2D, vp: Viewport): void {
@@ -508,7 +556,7 @@ function drawPausedBanner(ctx: CanvasRenderingContext2D, vp: Viewport): void {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.font = '600 13px ui-monospace, monospace';
-  ctx.fillText('PAUSED — vector / clear / hold freely', vp.cssW / 2, y + h / 2 + 1);
+  ctx.fillText('PAUSED — clear / dispatch / hold freely', vp.cssW / 2, y + h / 2 + 1);
 }
 
 function drawGameOver(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewport): void {
@@ -522,7 +570,7 @@ function drawGameOver(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewp
 
   ctx.fillStyle = PALETTE.text;
   ctx.font = '700 22px ui-monospace, monospace';
-  ctx.fillText(`${state.handled} landed   ·   $${state.cash}`, vp.cssW / 2, vp.cssH / 2 - 14);
+  ctx.fillText(`${state.handled} landed · ${state.departed} departed · $${state.cash}`, vp.cssW / 2, vp.cssH / 2 - 14);
 
   ctx.fillStyle = PALETTE.textDim;
   ctx.font = '500 14px ui-monospace, monospace';

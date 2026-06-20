@@ -11,42 +11,54 @@ function check(label: string, cond: boolean): void {
   console.log(`  ${cond ? 'PASS' : 'FAIL'}  ${label}`);
   if (!cond) failures++;
 }
+const d = (a: any, b: any) => Math.hypot(a.x - b.x, a.y - b.y);
+function nearestEnd(ac: any, rw: any): 0 | 1 {
+  return d(ac, rw.ends[0].finalEntry) <= d(ac, rw.ends[1].finalEntry) ? 0 : 1;
+}
 
 console.log('=== Final Approach — DOM/render/input smoke test ===\n');
 
 try {
-  // a few seconds for the first arrival(s)
   drive(60 * 6);
   check('rendered frames without throwing', true);
   check('aircraft spawned', getGame().totalSpawned >= 1);
 
-  // act as a controller for ~55s: clear inbound planes to a runway via the
-  // real input path (click plane, then click runway).
-  for (let i = 0; i < 28; i++) {
+  // act as a controller for ~80s: drag arrivals to a runway to land them, and
+  // drag ready-to-depart planes to a runway to launch them (the full ground loop).
+  for (let i = 0; i < 40; i++) {
     const s = getGame();
-    const rw = s.runways[i % s.runways.length];
-    const ac = s.aircraft.find(
-      (a: any) => a.assignedRunwayId == null && (a.phase === 'inbound' || a.phase === 'vectoring' || a.phase === 'holding'),
-    );
-    if (ac) {
-      fireClick({ x: ac.x, y: ac.y }); // select
-      fireClick({ x: rw.cx, y: rw.cy }); // clear to land
+    const rwA = s.runways[i % s.runways.length];
+    const arr = s.aircraft.find((a: any) => a.assignedRunwayId == null && (a.phase === 'inbound' || a.phase === 'holding'));
+    if (arr) {
+      const end = nearestEnd(arr, rwA);
+      fireDrag({ x: arr.x, y: arr.y }, { x: rwA.ends[end].threshold.x, y: rwA.ends[end].threshold.y });
+    }
+    const dep = s.aircraft.find((a: any) => a.phase === 'readyDep');
+    if (dep) {
+      const rwD = s.runways[(i + 1) % s.runways.length];
+      const end = nearestEnd(dep, rwD);
+      fireDrag({ x: dep.x, y: dep.y }, { x: rwD.ends[end].threshold.x, y: rwD.ends[end].threshold.y });
     }
     drive(120);
   }
-  check('click-to-land delivered at least one aircraft', getGame().handled >= 1);
-  check('controller earned salary', getGame().cash > 0 || getGame().handled >= 1);
+  check('drag-to-land delivered at least one arrival', getGame().handled >= 1);
+  check('arrivals taxi to gates + turn around + depart', getGame().departed >= 1);
+  check('controller earned salary', getGame().cash > 0);
 
-  // drag-to-vector
+  // bidirectional: a plane can be cleared to land on EITHER end of a runway.
   {
     const s = getGame();
     const ac = s.aircraft.find((a: any) => a.phase !== 'landing');
+    const rw = s.runways[0];
     if (ac) {
-      fireDrag({ x: ac.x, y: ac.y }, { x: ac.x - 120, y: ac.y - 80 });
-      const after = getGame().aircraft.find((a: any) => a.id === ac.id);
-      check('drag set a vector (waypoints / vectoring)', !!after && (after.phase === 'vectoring' || after.waypoints.length > 0));
+      fireDrag({ x: ac.x, y: ac.y }, { x: rw.ends[0].threshold.x, y: rw.ends[0].threshold.y });
+      const e0 = getGame().aircraft.find((a: any) => a.id === ac.id)?.assignedEnd;
+      fireDrag({ x: ac.x, y: ac.y }, { x: rw.ends[1].threshold.x, y: rw.ends[1].threshold.y });
+      const e1 = getGame().aircraft.find((a: any) => a.id === ac.id)?.assignedEnd;
+      check('drag to end 0 assigns end 0', e0 === 0);
+      check('drag to the other side assigns end 1 (bidirectional)', e1 === 1);
     } else {
-      check('drag set a vector (no aircraft to test)', true);
+      check('bidirectional landing (no aircraft to test)', true);
     }
   }
 
@@ -56,10 +68,9 @@ try {
     const ac = s.aircraft.find((a: any) => a.phase !== 'landing');
     if (ac) {
       fireRightClick({ x: ac.x, y: ac.y });
-      const after = getGame().aircraft.find((a: any) => a.id === ac.id);
-      check('right-click toggled hold', !!after && after.phase === 'holding');
+      check('right-click toggled hold', getGame().aircraft.find((a: any) => a.id === ac.id)?.phase === 'holding');
     } else {
-      check('right-click toggled hold (no aircraft to test)', true);
+      check('right-click hold (no aircraft to test)', true);
     }
   }
 
@@ -70,17 +81,20 @@ try {
   drive(120);
   check('sim time frozen while paused', Math.abs(getGame().time - tP) < 1e-6);
 
-  // editing works while paused
+  // editing (click an airborne arrival, click a runway side) works while paused
   {
     const s = getGame();
-    const ac = s.aircraft.find((a: any) => a.phase !== 'landing' && a.phase !== 'approach');
+    const ac = s.aircraft.find((a: any) => a.phase === 'inbound' || a.phase === 'holding');
+    const rw = s.runways[0];
     if (ac) {
+      const end = nearestEnd(ac, rw);
       fireClick({ x: ac.x, y: ac.y });
-      fireClick({ x: s.runways[0].cx, y: s.runways[0].cy });
+      // click out on the corridor (finalEntry) — clear of any plane near the strip
+      fireClick({ x: rw.ends[end].finalEntry.x, y: rw.ends[end].finalEntry.y });
       const after = getGame().aircraft.find((a: any) => a.id === ac.id);
-      check('can clear a plane to land while paused', !!after && after.assignedRunwayId === s.runways[0].id);
+      check('can clear a plane to land while paused', !!after && after.assignedRunwayId === rw.id);
     } else {
-      check('can edit while paused (no aircraft to test)', true);
+      check('can edit while paused (no airborne arrival to test)', true);
     }
   }
 
@@ -93,7 +107,6 @@ try {
   check('restart reset handled to 0', getGame().handled === 0);
   check('restart reset time to ~0', getGame().time < 1);
 
-  // long driven run shakes out late-stage crashes
   drive(60 * 120);
   check('survived a 2-minute driven run without throwing', true);
 } catch (err) {

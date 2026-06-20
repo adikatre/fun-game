@@ -7,7 +7,7 @@
 // into a hold. It exists to keep traffic flowing so the loop can be observed.
 
 import { CONFIG } from '../src/config';
-import { assignApproach, createGame, toggleHold, update } from '../src/sim';
+import { commandToRunway, createGame, toggleHold, update } from '../src/sim';
 import type { GameState } from '../src/types';
 
 const STEP = 1 / CONFIG.simStepHz;
@@ -15,51 +15,52 @@ const STEP = 1 / CONFIG.simStepHz;
 function dist(ax: number, ay: number, bx: number, by: number) {
   return Math.hypot(ax - bx, ay - by);
 }
+function nearestEnd(ac: { x: number; y: number }, rw: GameState['runways'][number]): 0 | 1 {
+  const d0 = dist(ac.x, ac.y, rw.ends[0].finalEntry.x, rw.ends[0].finalEntry.y);
+  const d1 = dist(ac.x, ac.y, rw.ends[1].finalEntry.x, rw.ends[1].finalEntry.y);
+  return d0 <= d1 ? 0 : 1;
+}
 
 function plan(state: GameState): void {
   // 1) break conflicts: send a conflicting plane into a hold (unless near touchdown)
   for (const ac of state.aircraft) {
     if (!ac.conflict) continue;
     const rw = ac.assignedRunwayId != null ? state.runways.find((r) => r.id === ac.assignedRunwayId) : undefined;
-    const nearTouchdown = rw && dist(ac.x, ac.y, rw.approachEnd.x, rw.approachEnd.y) < 110;
+    const th = rw && ac.assignedEnd != null ? rw.ends[ac.assignedEnd].threshold : null;
+    const nearTouchdown = th && dist(ac.x, ac.y, th.x, th.y) < 110;
     if (ac.phase !== 'holding' && !nearTouchdown) toggleHold(state, ac.id);
   }
 
-  // 2) fill each runway: accept a new approacher when empty, or a 2nd once the
-  //    leader is well down the final. Prefer emergencies, then low fuel, then
-  //    planes already on the approach (east) side to avoid ugly U-turns.
-  const assigned = new Set<number>();
+  // 2) one operation per runway at a time (the strip is shared by both ends and
+  //    by takeoffs). Prefer arrivals (emergency, then low fuel); if none waiting,
+  //    launch a ready departure to free a gate.
   for (const rw of state.runways) {
-    const appr = state.aircraft.filter((a) => a.phase === 'approach' && a.assignedRunwayId === rw.id);
-    const leadClose = appr.length > 0 && appr.every((a) => dist(a.x, a.y, rw.approachEnd.x, rw.approachEnd.y) < 150);
-    const canAccept = appr.length === 0 || (appr.length < 2 && leadClose);
-    if (!canAccept) continue;
+    const inUse = state.aircraft.some(
+      (a) =>
+        a.assignedRunwayId === rw.id &&
+        (a.phase === 'approach' || a.phase === 'taxiOut' || a.phase === 'holdShort' || a.phase === 'takeoff'),
+    );
+    if (inUse || state.time < rw.occupiedUntil) continue;
 
-    const candidates = state.aircraft
-      .filter(
-        (a) =>
-          !assigned.has(a.id) &&
-          a.assignedRunwayId == null &&
-          (a.phase === 'inbound' || a.phase === 'vectoring' || a.phase === 'holding') &&
-          !a.conflict,
-      )
+    const arr = state.aircraft
+      .filter((a) => a.assignedRunwayId == null && (a.phase === 'inbound' || a.phase === 'holding') && !a.conflict)
       .sort((a, b) => {
         const ea = a.emergency !== 'none' ? 0 : 1;
         const eb = b.emergency !== 'none' ? 0 : 1;
         if (ea !== eb) return ea - eb;
         return a.fuelSeconds - b.fuelSeconds;
-      });
-    // prefer a candidate already east of the airport (same side as the finals)
-    const pick = candidates.find((a) => a.x > rw.finalEntry.x - 120) ?? candidates[0];
-    if (pick) {
-      assignApproach(state, pick.id, rw.id);
-      assigned.add(pick.id);
+      })[0];
+    if (arr) {
+      commandToRunway(state, arr.id, rw.id, nearestEnd(arr, rw));
+      continue;
     }
+    const dep = state.aircraft.find((a) => a.phase === 'readyDep');
+    if (dep) commandToRunway(state, dep.id, rw.id, nearestEnd(dep, rw));
   }
 
   // 3) park anything still loose so it doesn't fly off and divert
   for (const ac of state.aircraft) {
-    if (ac.phase !== 'inbound' && ac.phase !== 'vectoring') continue;
+    if (ac.phase !== 'inbound') continue;
     if (ac.assignedRunwayId != null || ac.conflict) continue;
     toggleHold(state, ac.id);
   }
@@ -67,6 +68,7 @@ function plan(state: GameState): void {
 
 interface Result {
   handled: number;
+  departed: number;
   incidents: number;
   nearMisses: number;
   goArounds: number;
@@ -76,7 +78,7 @@ interface Result {
   totalSpawned: number;
   rngState: number;
   gameOver: boolean;
-  samples: { t: number; handled: number; incidents: number; airborne: number; cash: number }[];
+  samples: { t: number; handled: number; departed: number; incidents: number; airborne: number; cash: number }[];
 }
 
 function run(seed: number, maxSeconds: number, withPlanner: boolean): Result {
@@ -93,6 +95,7 @@ function run(seed: number, maxSeconds: number, withPlanner: boolean): Result {
       samples.push({
         t: Math.round(state.time),
         handled: state.handled,
+        departed: state.departed,
         incidents: state.incidents,
         airborne: state.aircraft.length,
         cash: state.cash,
@@ -102,6 +105,7 @@ function run(seed: number, maxSeconds: number, withPlanner: boolean): Result {
   }
   return {
     handled: state.handled,
+    departed: state.departed,
     incidents: state.incidents,
     nearMisses: state.nearMisses,
     goArounds: state.goArounds,
@@ -132,17 +136,19 @@ console.log(
   }`,
 );
 console.log(
-  `  handled=${play.handled}  cash=$${play.cash}  spawned=${play.totalSpawned}  ` +
+  `  landed=${play.handled}  departed=${play.departed}  cash=$${play.cash}  spawned=${play.totalSpawned}  ` +
     `incidents=${play.incidents}  near-miss=${play.nearMisses}  go-around=${play.goArounds}  diverted=${play.diversions}`,
 );
 console.log('  tension curve:');
-console.log('    t(s)  handled  incidents  airborne   cash');
+console.log('    t(s)  landed  departed  incidents  aircraft   cash');
 for (const s of play.samples) {
   if (s.t % 20 !== 0) continue;
   console.log(
-    `    ${s.t.toString().padStart(4)}  ${s.handled.toString().padStart(7)}  ${s.incidents
+    `    ${s.t.toString().padStart(4)}  ${s.handled.toString().padStart(6)}  ${s.departed
       .toString()
-      .padStart(9)}  ${s.airborne.toString().padStart(8)}  ${('$' + s.cash).padStart(6)}`,
+      .padStart(8)}  ${s.incidents.toString().padStart(9)}  ${s.airborne.toString().padStart(8)}  ${(
+      '$' + s.cash
+    ).padStart(6)}`,
   );
 }
 
