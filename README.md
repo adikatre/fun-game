@@ -1,27 +1,31 @@
-# Final Approach — ATC core-loop prototype
+# Final Approach — you are the tower
 
-You're the tower controller. Planes stream into your airspace; you guide each one
-onto a runway **without losing separation, fouling a runway, or running anyone out
-of fuel.** A safe landing pays your salary. **Two crashes and you're fired.**
-Traffic starts light and calm, then ramps to a holiday-rush climax with bursts and
-emergencies.
+Real-time air traffic control in the browser. Planes stream into your airspace;
+you guide each one onto a runway, taxi it to a gate, turn it around, and launch
+it again — **without losing separation, fouling a runway, or running anyone out
+of fuel.** A shift is **6 minutes**, graded S→F, ending in a **final rush**
+climax. Each career day is harder than the last. **Two crashes and you're fired.**
 
-This is a **feel prototype**. It pivots from an earlier transit prototype (now under
-[`prototypes/transit/`](./prototypes/transit/)) to answer the question that one
-couldn't: *does the real-time-with-pause loop feel tense and fun when the stakes are
-real?* See [`NOTES.md`](./NOTES.md) for the findings — that report is the deliverable.
+Fully synthesized audio (no assets), mouse + touch input, single-file build.
 
 ## Run it
 
 ```bash
 npm install
 npm run dev        # local dev server (http://localhost:5173)
-npm run build      # -> dist/index.html : a single self-contained file
+npm run build      # -> dist/index.html : ONE self-contained file
 npm run preview    # serve the built bundle
 ```
 
-`npm run build` emits **one self-contained `dist/index.html`** (JS + CSS inlined, no
-external runtime calls) — the form the CrazyGames HTML5 target wants.
+## Deploy
+
+`npm run build` emits a single self-contained `dist/index.html` (JS + CSS + audio
+all inlined; zero external requests). Deploying = putting that one file anywhere:
+
+- **Netlify / Vercel / GitHub Pages**: publish the `dist/` folder.
+- **itch.io**: zip `dist/index.html` (as `index.html`) and upload as an HTML5 game.
+- Any static file host or CDN works; there is no server component. Scores,
+  career day, and mute preference persist in `localStorage`.
 
 ### Tests / verification
 
@@ -31,90 +35,72 @@ npm run sim:test   # sim only: tension curve, determinism, per-step timing
 npm run smoke      # runs real render/input/main against a stubbed DOM (no browser)
 ```
 
-## Controls (mouse-first; no typed commands)
+## Controls (mouse-first; touch works)
 
 | Input | Action |
 | --- | --- |
-| **Drag a plane to a runway side** | If airborne: clear it to land from that end. If it's a **ready (cyan) departure** parked at a gate: launch it (takeoff in that direction). Each runway works **both** directions — drag to the side you want |
-| **Click a plane, then click a runway side** | Same, as two clicks |
-| **Right-click a plane** | Enter / leave a holding orbit (airborne only) |
+| **Drag a plane to a runway side** | If airborne: clear it to land from that end. If it's a **ready (cyan) departure** at a gate: launch it in that direction. Each runway works **both** directions |
+| **Tap a plane, then tap a runway side** | Same, as two taps |
+| **Right-click / double-tap a plane** | Enter / leave a holding orbit (airborne only) |
 | **Space** | Pause / resume — **you can still clear, dispatch, and hold while paused** |
-| **R** | Start a new shift (same seed) |
+| **M** | Mute / unmute · **R** restarts the shift |
+| **On-screen buttons** | PAUSE / SOUND / HOLD (bottom-right; touch-friendly) |
 
-CrazyGames key rules respected: pause is on `Space`; `Escape` and `Ctrl/Cmd+W` are
-never bound. `?seed=<n>` sets the RNG seed (reproducible). `?autoplay=1` is a QA aid
-that auto-clears inbound traffic so a fresh load shows a live, landing airport.
+`?seed=<n>` sets the RNG seed (reproducible run). QA aids: `?autoplay=1`
+auto-clears traffic; `?ff=<seconds>` fast-forwards the sim at load.
 
 ## What's in it
 
-- **Two runways, each landable from either end** (four approach corridors total);
-  the whole strip is occupied during a landing, so opposite-end approaches can't
-  run simultaneously. You choose the approach side per plane.
-- **Aircraft** in three types (small / medium / heavy) differing in speed, turn
-  rate, and wake separation — all rendered as radar blips with callsign data blocks,
-  heading-prediction vectors, and trails.
-- **Separation conflicts**: an amber/red alert ring appears when two planes get too
-  close; you have a fixed reaction window (and the pause, and go-arounds) before it
-  becomes a crash. Resolving it in time = a logged near-miss.
-- **Fuel**: depletes over the flight; low fuel becomes a priority emergency; empty =
-  crash.
-- **Emergencies**: medical (must land, can't go around, blocks the runway longer for
-  assistance) and low-fuel.
-- **Economy**: salary per landing (+ on-time bonus, + heavy bonus); penalties for
-  go-arounds, near-misses, diversions; a crash is brutal.
-- **Difficulty ramp**: calm onboarding from the approach side, widening to all
-  directions, faster arrivals, more heavies, then periodic **rush waves**.
-
-### Ground control (the second board)
-
-- **Gates** at a terminal between the runways. A landed arrival **taxis to a free
-  gate** (or idles on the ramp if they're all full), runs a **turnaround**
-  (deplane / refuel / board), and then goes **ready to depart** (cyan, pulsing).
-- **Departures**: drag a ready plane to a runway side to dispatch it — it taxis to
-  the hold-short, waits for the strip to be **clear** (it won't roll into a
-  landing), takes off in that direction, climbs out, and leaves the airspace for a
-  payout.
-- **The whole runway is shared** by landings *and* takeoffs from both ends, so you're
-  now sequencing two streams over the same two strips — the core new tension. Ground
-  traffic isn't subject to air separation; a climbing departure is.
+- **A session with a shape**: calm onboarding → density ramp → rush waves → a
+  **FINAL RUSH** in the last 75 s → **debrief with a letter grade** (S–F, scaled
+  to your career day), career-best tracking, and a next-day difficulty bump.
+- **Streak economy**: consecutive safe landings/departures multiply pay (up to
+  ×2); any near-miss, diversion, or crash resets it.
+- **Predictive conflict alerts**: closures are projected ~12 s ahead — an amber
+  ✕ marks *where* separation will be lost and in how many seconds, before the
+  red alert (with visible countdown-to-collision ring) ever starts.
+- **Synthesized audio**: radio chirps, touchdown thumps, streak-rising cash
+  chimes, mayday tones, a conflict klaxon, crash booms, ambience — all WebAudio,
+  zero asset files.
+- **Juice**: floating +$ popups, screen shake, incident flash, event banners,
+  animated cash counter, radar sweep.
+- **Two runways, each usable from either end** (four approach corridors);
+  landings and takeoffs share the strips, so you sequence two streams over one
+  resource. Gates, taxi, turnarounds, and departures make every arrival worth
+  two payouts.
+- **Emergencies**: medical (must land, blocks the runway longer) and low fuel.
 
 ## Architecture
 
-The same strict separation as the transit prototype (the loop is proven; this is a
-model swap on top of it):
+Strict separation, deterministic sim:
 
 ```
 src/
-  config.ts   All tuning constants + the radar palette. Tweak here.
+  config.ts   All tuning constants + palette + per-day difficulty. Tweak here.
   rng.ts      Seeded PRNG (mulberry32). The sim uses ONLY this, never Math.random.
-  types.ts    Shared data model (Aircraft, Runway, GameState, ...).
-  sim.ts      All game state + update(state, dt). No DOM, no canvas, no input.
+  types.ts    Shared data model (Aircraft, Runway, GameState, GameEvent, ...).
+  sim.ts      All game state + update(state, dt). No DOM. Emits GameEvents.
   render.ts   Draws a GameState as a radar scope. Interpolates motion. No logic.
-  input.ts    Mouse/keyboard -> player actions on the sim. Produces render hints.
-  main.ts     Fixed-timestep loop (sim @ 60 Hz; render on rAF with interpolation).
-  sdk.ts      No-op CrazyGames SDK interface (forward hook; not integrated).
+  input.ts    Pointer/keyboard -> player actions. Produces render hints.
+  ui.ts       Screen-space button layout shared by render + input.
+  audio.ts    WebAudio synth engine (event-driven; no assets).
+  fx.ts       Render-only feedback: popups, shake, banners, cash tween.
+  main.ts     Fixed-timestep loop + session flow (briefing→shift→debrief→next day),
+              localStorage persistence, event draining into audio/fx.
+  sdk.ts      No-op platform SDK interface (forward hook).
 tools/
   headless.ts Sim metrics harness (auto-controller + tension/determinism/perf).
   fakedom.ts  Minimal DOM/Canvas2D stub for the smoke test.
-  smoke-dom.ts Full-stack runtime smoke test.
-prototypes/
-  transit/    The earlier Headway transit prototype (source + its report), preserved
-              for reference. Its entry was the root index.html, which now loads ATC.
+  smoke-dom.ts Full-stack runtime smoke test (input → sim → render, 20 checks).
 ```
 
-- **Determinism:** same seed + same player actions ⇒ identical evolution. Randomness
-  flows only through `state.rng`. Verified by the harness.
-- **Pause-to-replan:** sim time freezes while all commands stay live; resume is
-  seamless (the renderer interpolates from a per-tick snapshot).
+- **Determinism:** same seed + same player actions ⇒ identical evolution. The
+  sim communicates outward only through `state.events` (drained by `main` for
+  audio/fx), so feedback never touches the simulation. Verified by the harness.
+- **Pause-to-replan:** sim time freezes while all commands stay live.
 
-## Scope (and what's deliberately deferred)
+## Deferred ideas
 
-Implemented: the air core (arrivals, bidirectional runways, separation, fuel,
-emergencies, ramp) **plus the ground-control layer** (gates, taxi-in, turnaround,
-departures, takeoffs, shared-runway contention).
-
-Still deferred (next increments): a real **taxiway network** with manual taxi
-routing and **runway-crossing conflicts** (the current taxi is auto-routed
-straight-line and the terminal sits between the runways so nothing has to cross an
-active strip); plus typed ATC-language commands, weather, multiple airports, and
-meta-progression.
+A real taxiway network with runway-crossing conflicts, weather cells, speed
+controls (the real controller's spacing tool), a shared daily-seed challenge
+board, and end-of-shift upgrade drafts.

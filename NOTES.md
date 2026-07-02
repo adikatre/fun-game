@@ -7,6 +7,46 @@
 
 ## Update log (newest first)
 
+**Fun/UX overhaul + deployment readiness (July 2026).** The prototype became a
+game. What changed and why:
+
+1. **Timed shifts with a grade (the big structural fix).** The old
+   endless-until-fired loop plateaued into a grind. A shift is now 6 minutes
+   with an arc — ramp → rush waves → a **FINAL RUSH** in the last 75 s — ending
+   in a debrief screen with a letter grade (S–F, target scales per career day),
+   career-best tracking (`localStorage`), and a NEXT SHIFT that's genuinely
+   harder (spawn intervals shrink ~7%/day, rush waves grow). Two crashes still
+   fires you on the spot.
+2. **Fully synthesized WebAudio** (`audio.ts`): radio chirps on clearances,
+   touchdown thump + cash chime that rises a semitone per streak, spool-up
+   whoosh on departures, mayday two-tones, a pulsing conflict klaxon driven by
+   live alert level, crash boom, ambience, shift-end jingle. Zero asset files;
+   the build stays one HTML file. Mute persists (M key / on-screen button).
+3. **Predictive conflict warnings.** The flat 3.6 s red window felt twitchy
+   (called out in the original report). The sim now projects closures 12 s
+   ahead: an amber ✕ marks *where* separation will be lost and in how many
+   seconds; the red phase shows a countdown ring + seconds-to-impact. Deaths
+   feel earned; pause is a planning tool instead of a panic button.
+4. **Streak economy.** Consecutive safe landings/departures multiply pay up to
+   ×2 (HUD badge; near-miss/diversion/crash resets). Gives the mid-game a
+   risk/reward pull the flat economy lacked.
+5. **Juice** (`fx.ts`): +$ popups at the touchdown point, screen shake + red
+   flash on incidents, sliding event banners (MAYDAY / RUSH / FINAL RUSH),
+   eased cash counter, radar sweep. All render-side; the deterministic sim
+   communicates through a drained `state.events` queue, so determinism is
+   untouched (harness: PASS).
+6. **Touch + UX**: pointer events, double-tap = hold, on-screen PAUSE/SOUND/
+   HOLD buttons (shared layout in `ui.ts` so render and hit-testing can't
+   disagree), tap-empty-space deselects, briefing/start screen that also
+   unlocks audio, proper end screens with buttons.
+7. **Deployment**: meta/OG tags, inline SVG favicon, `?ff=` QA fast-forward.
+   `dist/index.html` is 52 KB (17 KB gzip), zero external requests.
+
+Verification: typecheck clean, determinism PASS, 0.0016 ms/step loaded,
+20/20 smoke checks (now covering briefing → shift → debrief → next-day flow),
+headless-Chrome screenshots of briefing, mid-game (streaks, occupied-runway
+amber, inbound strip), and the fired screen.
+
 **Ground control layer + bidirectional runways.** Two additions on top of the
 air-core v1 below:
 

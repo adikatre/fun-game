@@ -20,13 +20,25 @@ export const CONFIG = {
     { cx: 560, cy: 500, headingDeg: 180, length: 150, side: 'R' as const },
   ],
 
+  // --- session: a shift is a timed round with an escalating arc + final rush ---
+  shiftSeconds: 360, // 6-minute shift
+  finalRushLead: 75, // the "final rush" climax starts this many seconds before the end
+  finalRushSize: 4, // burst size at final-rush start
+  finalRushIntervalFactor: 0.7, // spawn interval multiplier during the final rush
+  // per-day (career) difficulty scaling
+  dayIntervalFactor: 0.93, // spawn intervals shrink ~7% per day (floored below)
+  dayIntervalFloor: 0.6,
+  dayRushBonusEvery: 2, // rush waves grow by 1 plane every N days
+  gradeTargetBase: 2400, // cash target for an A on day 1...
+  gradeTargetPerDay: 400, // ...growing per day
+
   // --- failure ---
   crashesToFire: 2, // 2nd crash ends the shift (you're fired)
 
   // --- separation / conflict ---
   separationMin: 66, // base lateral separation ring radius (px); scaled by wake
   conflictToCrash: 3.6, // seconds two planes may stay inside separation before they collide
-  // (a fixed, fair reaction window once the amber alert shows)
+  predictLookahead: 12, // seconds ahead to project closures for the AMBER pre-warning
 
   // --- aircraft types: cruise px/s, approach factor, turn rate deg/s, wake factor, salary ---
   types: {
@@ -47,12 +59,12 @@ export const CONFIG = {
   fuelVariance: 35,
   lowFuelAt: 42, // below this -> low-fuel emergency (priority)
 
-  // --- difficulty ramp ---
+  // --- difficulty ramp (within a shift) ---
   firstSpawnAt: 3, // get a plane on the scope almost immediately
   spawnIntervalStart: 21, // calm onboarding
   spawnIntervalEnd: 6.5,
-  rampDurationSeconds: 180,
-  rushWaveEvery: 40, // after the ramp, periodic bursts ("holiday rush")
+  rampDurationSeconds: 165,
+  rushWaveEvery: 45, // after the ramp, periodic bursts ("holiday rush")
   rushWaveSize: 3,
   maxAirborneStart: 4, // concurrency cap (grows over time)
   maxAirborneGrowEvery: 40,
@@ -75,6 +87,8 @@ export const CONFIG = {
   nearMissPenalty: 35,
   diversionPenalty: 45, // a plane allowed to leave the airspace unhandled
   crashPenalty: 500,
+  streakStep: 0.1, // each consecutive safe landing/departure adds +10% pay...
+  streakMaxMult: 2.0, // ...up to double pay
 
   // --- ground ops (terminal sits between the two runways) ---
   gates: [
@@ -121,13 +135,28 @@ export const PALETTE = {
   gateBusy: '#e8b54a',
   gateReady: '#5bd6e8',
   selected: '#e9f7ee',
-  warn: '#e8b54a', // low fuel / caution
+  warn: '#e8b54a', // low fuel / caution / predicted conflict
   danger: '#ff5a48', // conflict / emergency / crash
+  cash: '#8ff0b4', // score popups
   text: '#dff3e6',
   textDim: 'rgba(223,243,230,0.55)',
   panel: 'rgba(10,18,14,0.82)',
   panelEdge: 'rgba(103,232,160,0.25)',
 } as const;
+
+/** Per-day difficulty knobs derived from CONFIG (career progression). */
+export function dayDifficulty(day: number): {
+  intervalFactor: number;
+  rushWaveSize: number;
+  gradeTarget: number;
+} {
+  const d = Math.max(1, day);
+  return {
+    intervalFactor: Math.max(CONFIG.dayIntervalFloor, Math.pow(CONFIG.dayIntervalFactor, d - 1)),
+    rushWaveSize: CONFIG.rushWaveSize + Math.floor((d - 1) / CONFIG.dayRushBonusEvery),
+    gradeTarget: CONFIG.gradeTargetBase + (d - 1) * CONFIG.gradeTargetPerDay,
+  };
+}
 
 export type RunwayLayout = (typeof CONFIG.runways)[number];
 export type AircraftTypeKey = keyof typeof CONFIG.types;

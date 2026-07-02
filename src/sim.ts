@@ -1,16 +1,18 @@
 // sim.ts — all game state + update(state, dt). NO DOM / canvas / input.
 // Deterministic: same seed + same player actions ⇒ identical evolution.
-// Randomness flows only through state.rng.
+// Randomness flows only through state.rng. The sim reports what happened each
+// tick through state.events (drained by main for audio/fx) — output only, so
+// determinism is unaffected.
 
-import { CONFIG } from './config';
+import { CONFIG, dayDifficulty } from './config';
 import { createRng } from './rng';
 import {
   AIRBORNE_PHASES,
   type Aircraft,
   type AircraftType,
-  type DraftState,
   type Gate,
   type GameState,
+  type Grade,
   type Runway,
   type Vec,
 } from './types';
@@ -81,12 +83,15 @@ function buildRunways(): Runway[] {
   });
 }
 
-export function createGame(seed: number = CONFIG.defaultSeed): GameState {
+export function createGame(seed: number = CONFIG.defaultSeed, day = 1, briefing = false): GameState {
   const rng = createRng(seed);
   return {
     time: 0,
     paused: false,
-    status: 'playing',
+    status: briefing ? 'briefing' : 'playing',
+    day,
+    shiftLength: CONFIG.shiftSeconds,
+    grade: null,
     aircraft: [],
     runways: buildRunways(),
     gates: CONFIG.gates.map((g, i) => ({ id: i + 1, x: g.x, y: g.y, occupantId: null })),
@@ -97,22 +102,31 @@ export function createGame(seed: number = CONFIG.defaultSeed): GameState {
     nearMisses: 0,
     goArounds: 0,
     diversions: 0,
+    streak: 0,
+    bestStreak: 0,
     spawnAccumulator: 0,
     nextSpawnInterval: CONFIG.firstSpawnAt,
     nextRushAt: CONFIG.rampDurationSeconds + CONFIG.rushWaveEvery,
     totalSpawned: 0,
+    finalRushFired: false,
     conflicts: new Map(),
+    predicted: [],
     crashFx: [],
+    events: [],
     showHint: true,
-    draft: null,
     nextAircraftId: 1,
     rngSeed: seed,
     rng,
   };
 }
 
-export function restart(seed: number): GameState {
-  return createGame(seed);
+export function restart(seed: number, day = 1, briefing = false): GameState {
+  return createGame(seed, day, briefing);
+}
+
+/** Leave the briefing screen and start the shift. */
+export function startShift(state: GameState): void {
+  if (state.status === 'briefing') state.status = 'playing';
 }
 
 // ----------------------------------------------------------------------------
@@ -121,8 +135,16 @@ export function restart(seed: number): GameState {
 
 const CALLSIGNS = ['DAL', 'UAL', 'AAL', 'SWA', 'JBU', 'FDX', 'UPS', 'NKS', 'ASA', 'VIR'];
 
-function spawnInterval(time: number): number {
-  return lerp(CONFIG.spawnIntervalStart, CONFIG.spawnIntervalEnd, clamp01(time / CONFIG.rampDurationSeconds));
+function inFinalRush(state: GameState): boolean {
+  return state.time >= state.shiftLength - CONFIG.finalRushLead;
+}
+function spawnInterval(state: GameState): number {
+  const diff = dayDifficulty(state.day);
+  let iv =
+    lerp(CONFIG.spawnIntervalStart, CONFIG.spawnIntervalEnd, clamp01(state.time / CONFIG.rampDurationSeconds)) *
+    diff.intervalFactor;
+  if (inFinalRush(state)) iv *= CONFIG.finalRushIntervalFactor;
+  return iv;
 }
 function maxAirborne(time: number): number {
   return Math.min(CONFIG.maxAirborneCap, CONFIG.maxAirborneStart + Math.floor(time / CONFIG.maxAirborneGrowEvery));
@@ -171,6 +193,7 @@ function makeAircraft(state: GameState): Aircraft {
       emergency = 'lowFuel';
     }
   }
+  if (emergency !== 'none') state.events.push({ kind: 'emergency', emergency, callsign });
 
   return {
     id: state.nextAircraftId++,
@@ -199,6 +222,8 @@ function makeAircraft(state: GameState): Aircraft {
     landDecel: 0,
     conflict: false,
     conflictPartner: null,
+    conflictTimeLeft: 0,
+    warn: false,
     trail: [],
     px: x,
     py: y,
@@ -234,6 +259,7 @@ export function assignApproach(state: GameState, aircraftId: number, runwayId: n
   ac.assignedEnd = end;
   ac.holdCenter = null;
   ac.waypoints = [{ ...re.finalEntry }, { ...re.threshold }];
+  state.events.push({ kind: 'assign', x: ac.x, y: ac.y });
   return true;
 }
 
@@ -248,6 +274,7 @@ export function dispatchDeparture(state: GameState, aircraftId: number, runwayId
   ac.phase = 'taxiOut';
   // line up at the OPPOSITE end and roll toward `end` (take off in end.dir)
   ac.taxiTarget = { ...rw.ends[(1 - end) as 0 | 1].threshold };
+  state.events.push({ kind: 'dispatch', x: ac.x, y: ac.y });
   return true;
 }
 
@@ -266,6 +293,7 @@ export function toggleHold(state: GameState, aircraftId: number): boolean {
   if (ac.phase === 'holding') {
     ac.phase = 'inbound';
     ac.holdCenter = null;
+    state.events.push({ kind: 'unhold' });
   } else {
     ac.holdCenter = {
       x: ac.x + Math.cos(ac.heading) * CONFIG.holdRadius,
@@ -275,6 +303,7 @@ export function toggleHold(state: GameState, aircraftId: number): boolean {
     ac.assignedRunwayId = null;
     ac.assignedEnd = null;
     ac.waypoints = [];
+    state.events.push({ kind: 'hold' });
   }
   return true;
 }
@@ -290,6 +319,7 @@ function goAround(state: GameState, ac: Aircraft): void {
   ac.waypoints = [];
   state.goArounds += 1;
   state.cash -= CONFIG.goAroundPenalty;
+  state.events.push({ kind: 'goAround', amount: -CONFIG.goAroundPenalty, x: ac.x, y: ac.y });
 }
 
 function attemptLanding(state: GameState, ac: Aircraft, rw: Runway, end: 0 | 1): void {
@@ -366,9 +396,26 @@ function groundBlockedAhead(state: GameState, ac: Aircraft): boolean {
   return false;
 }
 
+/** Streak-scaled pay multiplier for safe operations. */
+function streakMult(state: GameState): number {
+  return Math.min(CONFIG.streakMaxMult, 1 + state.streak * CONFIG.streakStep);
+}
+function breakStreak(state: GameState): void {
+  state.streak = 0;
+}
+
 /** Rolled out: pay for the arrival, then head for a gate (or the ramp if full). */
 function beginTaxiIn(state: GameState, ac: Aircraft): void {
-  payForLanding(state, ac); // arrival salary + on-time bonus, handled++
+  // arrival salary + on-time bonus, scaled by the safe-operation streak
+  const base = CONFIG.types[ac.type].salary;
+  const onTime = Math.round(CONFIG.onTimeBonusMax * clamp01(1 - ac.age / CONFIG.onTimeWindow));
+  const amount = Math.round((base + onTime) * streakMult(state));
+  state.cash += amount;
+  state.handled += 1;
+  state.streak += 1;
+  state.bestStreak = Math.max(state.bestStreak, state.streak);
+  state.events.push({ kind: 'land', amount, x: ac.x, y: ac.y, streak: state.streak });
+
   ac.emergency = 'none'; // resolved on the ground
   ac.assignedRunwayId = null;
   ac.assignedEnd = null;
@@ -394,7 +441,10 @@ function stepAircraft(state: GameState, ac: Aircraft, dt: number): Disposition {
   const airborne = AIRBORNE_PHASES.includes(ac.phase);
   if (airborne) {
     ac.fuelSeconds -= dt;
-    if (ac.fuelSeconds <= CONFIG.lowFuelAt && ac.emergency === 'none') ac.emergency = 'lowFuel';
+    if (ac.fuelSeconds <= CONFIG.lowFuelAt && ac.emergency === 'none') {
+      ac.emergency = 'lowFuel';
+      state.events.push({ kind: 'emergency', emergency: 'lowFuel', callsign: ac.callsign });
+    }
   }
 
   // --- steering (set heading) + speed target ---
@@ -540,14 +590,22 @@ function stepAircraft(state: GameState, ac: Aircraft, dt: number): Disposition {
 }
 
 // ----------------------------------------------------------------------------
-// economy on a safe landing
+// grading (end of shift)
 // ----------------------------------------------------------------------------
 
-function payForLanding(state: GameState, ac: Aircraft): void {
-  const base = CONFIG.types[ac.type].salary;
-  const onTime = Math.round(CONFIG.onTimeBonusMax * clamp01(1 - ac.age / CONFIG.onTimeWindow));
-  state.cash += base + onTime;
-  state.handled += 1;
+export function computeGrade(state: GameState): Grade {
+  if (state.status === 'fired' || state.incidents >= CONFIG.crashesToFire) return 'F';
+  const target = dayDifficulty(state.day).gradeTarget;
+  const clean = state.incidents === 0;
+  let g: Grade;
+  if (clean && state.nearMisses === 0 && state.cash >= target * 1.25) g = 'S';
+  else if (clean && state.cash >= target) g = 'A';
+  else if (state.cash >= target * 0.6) g = 'B';
+  else if (state.cash >= target * 0.3) g = 'C';
+  else g = 'D';
+  // a crash caps the grade at C — safety first
+  if (!clean && (g === 'S' || g === 'A' || g === 'B')) g = 'C';
+  return g;
 }
 
 // ----------------------------------------------------------------------------
@@ -562,7 +620,7 @@ function snapshotInterp(state: GameState): void {
 }
 
 export function update(state: GameState, dt: number): void {
-  if (state.paused || state.status === 'gameover') {
+  if (state.paused || state.status !== 'playing') {
     // freeze interpolation (geometry may have changed via paused editing)
     for (const ac of state.aircraft) {
       ac.px = ac.x;
@@ -580,6 +638,26 @@ export function update(state: GameState, dt: number): void {
   for (const fx of state.crashFx) fx.ttl -= dt;
   state.crashFx = state.crashFx.filter((f) => f.ttl > 0);
 
+  const diff = dayDifficulty(state.day);
+
+  // --- shift clock ---
+  if (!state.finalRushFired && state.time >= state.shiftLength - CONFIG.finalRushLead) {
+    state.finalRushFired = true;
+    state.events.push({ kind: 'finalRush' });
+    for (let k = 0; k < CONFIG.finalRushSize; k++) {
+      if (state.aircraft.length < CONFIG.maxAirborneCap) {
+        state.aircraft.push(makeAircraft(state));
+        state.totalSpawned += 1;
+      }
+    }
+  }
+  if (state.time >= state.shiftLength) {
+    state.status = 'debrief';
+    state.grade = computeGrade(state);
+    state.events.push({ kind: 'shiftEnd', grade: state.grade });
+    return;
+  }
+
   // --- spawning ---
   state.spawnAccumulator += dt;
   while (state.spawnAccumulator >= state.nextSpawnInterval) {
@@ -588,11 +666,12 @@ export function update(state: GameState, dt: number): void {
       state.aircraft.push(makeAircraft(state));
       state.totalSpawned += 1;
     }
-    state.nextSpawnInterval = spawnInterval(state.time);
+    state.nextSpawnInterval = spawnInterval(state);
   }
   // rush waves after the ramp
   if (state.time >= state.nextRushAt) {
-    for (let k = 0; k < CONFIG.rushWaveSize; k++) {
+    state.events.push({ kind: 'rush' });
+    for (let k = 0; k < diff.rushWaveSize; k++) {
       if (state.aircraft.length < CONFIG.maxAirborneCap) {
         state.aircraft.push(makeAircraft(state));
         state.totalSpawned += 1;
@@ -606,17 +685,25 @@ export function update(state: GameState, dt: number): void {
   for (const ac of state.aircraft) {
     const d = stepAircraft(state, ac, dt);
     if (d === 'departed') {
-      state.cash += CONFIG.departureSalary;
+      const amount = Math.round(CONFIG.departureSalary * streakMult(state));
+      state.cash += amount;
       state.departed += 1;
+      state.streak += 1;
+      state.bestStreak = Math.max(state.bestStreak, state.streak);
+      state.events.push({ kind: 'depart', amount, x: ac.x, y: ac.y, streak: state.streak });
       remove.add(ac.id);
     } else if (d === 'diverted') {
       state.diversions += 1;
       state.cash -= CONFIG.diversionPenalty;
+      breakStreak(state);
+      state.events.push({ kind: 'divert', amount: -CONFIG.diversionPenalty, x: ac.x, y: ac.y });
       remove.add(ac.id);
     } else if (ac.fuelSeconds <= 0 && AIRBORNE_PHASES.includes(ac.phase)) {
       state.incidents += 1;
       state.cash -= CONFIG.crashPenalty;
+      breakStreak(state);
       state.crashFx.push({ x: ac.x, y: ac.y, ttl: 1.5 });
+      state.events.push({ kind: 'crash', x: ac.x, y: ac.y });
       remove.add(ac.id);
     }
   }
@@ -625,7 +712,10 @@ export function update(state: GameState, dt: number): void {
   for (const ac of state.aircraft) {
     ac.conflict = false;
     ac.conflictPartner = null;
+    ac.conflictTimeLeft = 0;
+    ac.warn = false;
   }
+  state.predicted = [];
   const airborne = state.aircraft.filter((a) => AIRBORNE_PHASES.includes(a.phase) && !remove.has(a.id));
   const next = new Map<string, number>();
   const crashPairs: [Aircraft, Aircraft][] = [];
@@ -641,13 +731,48 @@ export function update(state: GameState, dt: number): void {
         const t = prevT + dt;
         next.set(key, t);
         a.conflict = b.conflict = true;
+        const left = Math.max(0, CONFIG.conflictToCrash - t);
+        a.conflictTimeLeft = a.conflictTimeLeft > 0 ? Math.min(a.conflictTimeLeft, left) : left;
+        b.conflictTimeLeft = b.conflictTimeLeft > 0 ? Math.min(b.conflictTimeLeft, left) : left;
         if (a.conflictPartner == null) a.conflictPartner = b.id;
         if (b.conflictPartner == null) b.conflictPartner = a.id;
         if (t >= CONFIG.conflictToCrash) crashPairs.push([a, b]);
-      } else if (prevT > 0) {
-        // separation regained before collision => near miss
-        state.nearMisses += 1;
-        state.cash -= CONFIG.nearMissPenalty;
+      } else {
+        if (prevT > 0) {
+          // separation regained before collision => near miss
+          state.nearMisses += 1;
+          state.cash -= CONFIG.nearMissPenalty;
+          breakStreak(state);
+          state.events.push({
+            kind: 'nearMiss',
+            amount: -CONFIG.nearMissPenalty,
+            x: (a.x + b.x) / 2,
+            y: (a.y + b.y) / 2,
+          });
+        }
+        // AMBER pre-warning: project current headings/speeds to closest approach
+        const rx = b.x - a.x;
+        const ry = b.y - a.y;
+        const vx = Math.cos(b.heading) * b.speed - Math.cos(a.heading) * a.speed;
+        const vy = Math.sin(b.heading) * b.speed - Math.sin(a.heading) * a.speed;
+        const vv = vx * vx + vy * vy;
+        if (vv > 1e-6) {
+          const tca = -(rx * vx + ry * vy) / vv;
+          if (tca > 0 && tca <= CONFIG.predictLookahead) {
+            const cx = rx + vx * tca;
+            const cy = ry + vy * tca;
+            if (Math.hypot(cx, cy) < sep * 0.95) {
+              a.warn = b.warn = true;
+              state.predicted.push({
+                aId: a.id,
+                bId: b.id,
+                t: tca,
+                x: a.x + Math.cos(a.heading) * a.speed * tca + cx / 2,
+                y: a.y + Math.sin(a.heading) * a.speed * tca + cy / 2,
+              });
+            }
+          }
+        }
       }
     }
   }
@@ -659,33 +784,25 @@ export function update(state: GameState, dt: number): void {
     remove.add(b.id);
     state.incidents += 1;
     state.cash -= CONFIG.crashPenalty;
-    state.crashFx.push({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, ttl: 1.5 });
+    breakStreak(state);
+    const cx = (a.x + b.x) / 2;
+    const cy = (a.y + b.y) / 2;
+    state.crashFx.push({ x: cx, y: cy, ttl: 1.5 });
+    state.events.push({ kind: 'crash', x: cx, y: cy });
   }
 
   if (remove.size > 0) state.aircraft = state.aircraft.filter((a) => !remove.has(a.id));
 
   // --- failure ---
-  if (state.incidents >= CONFIG.crashesToFire) state.status = 'gameover';
+  if (state.incidents >= CONFIG.crashesToFire) {
+    state.status = 'fired';
+    state.grade = 'F';
+    state.events.push({ kind: 'fired' });
+  }
 
   // --- onboarding hint ---
   if (state.handled > 0 || state.time > 22) state.showHint = false;
-}
 
-// ----------------------------------------------------------------------------
-// M4-style end-of-shift bonus draft (optional scaffolding; off by default flow)
-// ----------------------------------------------------------------------------
-
-export function openDraft(state: GameState): void {
-  const opts: DraftState['options'] = [
-    { id: 'fuel', title: 'Fuel Reserves', desc: 'Inbound traffic arrives with more fuel.' },
-    { id: 'turnaround', title: 'Fast Turnaround', desc: 'Runways clear quicker after landings.' },
-    { id: 'spacing', title: 'Wake Waiver', desc: 'Tighter separation allowed (riskier, denser).' },
-  ];
-  state.draft = { options: opts };
-  state.paused = true;
-}
-export function applyDraftOption(state: GameState, _optionId: string): void {
-  // intentionally minimal for the prototype; effects wired in A4 if pursued
-  state.draft = null;
-  state.paused = false;
+  // keep the event queue bounded if nobody drains it (headless harness)
+  if (state.events.length > 512) state.events.splice(0, state.events.length - 512);
 }

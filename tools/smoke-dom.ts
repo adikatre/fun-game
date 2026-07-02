@@ -3,7 +3,7 @@
 // mouse/keyboard input without throwing.
 //
 // Import order matters: fakedom installs globals BEFORE main.ts runs.
-import { drive, fireClick, fireDrag, fireKey, fireRightClick, getGame } from './fakedom';
+import { drive, fireClick, fireDrag, fireKey, fireRightClick, fireScreenClick, getGame } from './fakedom';
 import '../src/main';
 
 let failures = 0;
@@ -19,6 +19,12 @@ function nearestEnd(ac: any, rw: any): 0 | 1 {
 console.log('=== Final Approach — DOM/render/input smoke test ===\n');
 
 try {
+  drive(10);
+  check('boots to the briefing screen', getGame().status === 'briefing');
+  fireScreenClick({ x: 200, y: 200 }); // any tap starts the shift
+  drive(2);
+  check('click starts the shift', getGame().status === 'playing');
+
   drive(60 * 6);
   check('rendered frames without throwing', true);
   check('aircraft spawned', getGame().totalSpawned >= 1);
@@ -65,7 +71,7 @@ try {
   // right-click hold
   {
     const s = getGame();
-    const ac = s.aircraft.find((a: any) => a.phase !== 'landing');
+    const ac = s.aircraft.find((a: any) => a.phase === 'inbound' || a.phase === 'approach');
     if (ac) {
       fireRightClick({ x: ac.x, y: ac.y });
       check('right-click toggled hold', getGame().aircraft.find((a: any) => a.id === ac.id)?.phase === 'holding');
@@ -109,6 +115,29 @@ try {
 
   drive(60 * 120);
   check('survived a 2-minute driven run without throwing', true);
+
+  // shift end -> debrief screen with a grade -> NEXT SHIFT button starts a harder day
+  {
+    const s = getGame();
+    if (s.status === 'playing') {
+      s.time = s.shiftLength - 0.05;
+      drive(10);
+    }
+    check('shift timer ends in debrief or fired', getGame().status === 'debrief' || getGame().status === 'fired');
+    check('a grade was assigned', getGame().grade != null);
+    const dayBefore = getGame().day;
+    if (getGame().status === 'debrief') {
+      // primary "NEXT SHIFT" button center (see ui.endButtons): left of center, cy+132+h/2
+      fireScreenClick({ x: 1280 / 2 - 12 - 110, y: 800 / 2 + 132 + 26 });
+      drive(5);
+      check('NEXT SHIFT advances the day', getGame().day === dayBefore + 1 && getGame().status === 'playing');
+    } else {
+      // "TRY AGAIN" button (centered)
+      fireScreenClick({ x: 1280 / 2, y: 800 / 2 + 132 + 26 });
+      drive(5);
+      check('TRY AGAIN restarts the day', getGame().day === dayBefore && getGame().status === 'playing');
+    }
+  }
 } catch (err) {
   console.log('\n  THREW:', err);
   failures++;

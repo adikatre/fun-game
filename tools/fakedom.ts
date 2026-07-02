@@ -97,8 +97,14 @@ const ev = (p: { x: number; y: number }, button = 0) => ({
 /** Click (no drag) at a world point. */
 export function fireClick(world: { x: number; y: number }): void {
   const p = worldToScreen(world.x, world.y);
-  fire(canvasListeners, 'mousedown', ev(p));
-  fire(windowListeners, 'mouseup', ev(p));
+  fire(canvasListeners, 'pointerdown', ev(p));
+  fire(windowListeners, 'pointerup', ev(p));
+}
+
+/** Click at a raw screen point (menu buttons etc.). */
+export function fireScreenClick(p: { x: number; y: number }): void {
+  fire(canvasListeners, 'pointerdown', ev(p));
+  fire(windowListeners, 'pointerup', ev(p));
 }
 
 /** Right-click at a world point. */
@@ -112,10 +118,10 @@ export function fireDrag(fromW: { x: number; y: number }, toW: { x: number; y: n
   const a = worldToScreen(fromW.x, fromW.y);
   const b = worldToScreen(toW.x, toW.y);
   const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-  fire(canvasListeners, 'mousedown', ev(a));
-  fire(windowListeners, 'mousemove', ev(mid));
-  fire(windowListeners, 'mousemove', ev(b));
-  fire(windowListeners, 'mouseup', ev(b));
+  fire(canvasListeners, 'pointerdown', ev(a));
+  fire(windowListeners, 'pointermove', ev(mid));
+  fire(windowListeners, 'pointermove', ev(b));
+  fire(windowListeners, 'pointerup', ev(b));
 }
 
 export function fireKey(code: string): void {

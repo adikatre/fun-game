@@ -83,6 +83,7 @@ interface Result {
 
 function run(seed: number, maxSeconds: number, withPlanner: boolean): Result {
   const state = createGame(seed);
+  state.shiftLength = Math.max(state.shiftLength, maxSeconds); // measure past the shift end
   const samples: Result['samples'] = [];
   let step = 0;
   const planEvery = Math.round(0.5 / STEP);
@@ -114,7 +115,7 @@ function run(seed: number, maxSeconds: number, withPlanner: boolean): Result {
     timeEnded: state.time,
     totalSpawned: state.totalSpawned,
     rngState: state.rng.state,
-    gameOver: state.status === 'gameover',
+    gameOver: state.status === 'fired',
     samples,
   };
 }
@@ -170,6 +171,7 @@ console.log(`  different seed differs: ${c.handled !== a.handled || c.rngState !
 
 // 4) Performance under load.
 const perf = createGame(CONFIG.defaultSeed);
+perf.shiftLength = 1e9; // never hit the debrief; we're timing steady-state updates
 for (let i = 0; i < 60 * 200; i++) {
   if (i % 30 === 0) plan(perf);
   if (perf.status !== 'playing') break;

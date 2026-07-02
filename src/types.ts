@@ -65,8 +65,10 @@ export interface Aircraft {
   age: number; // seconds since spawn (gates diversion / on-time bonus)
   landTimer: number; // runway occupancy countdown while phase === 'landing'
   landDecel: number; // px/s² deceleration computed at touchdown (physics-based rollout)
-  conflict: boolean; // inside separation with someone this tick (render)
+  conflict: boolean; // inside separation with someone this tick (render: RED)
   conflictPartner: number | null; // id of nearest conflicting plane (render connector)
+  conflictTimeLeft: number; // seconds until this conflict becomes a crash (render countdown)
+  warn: boolean; // PREDICTED conflict within lookahead (render: AMBER)
   trail: Vec[]; // recent positions (radar trail)
   // render interpolation
   px: number;
@@ -100,21 +102,50 @@ export interface Gate {
   occupantId: number | null;
 }
 
-export type GameStatus = 'playing' | 'gameover';
+/**
+ * briefing — start screen; sim is frozen until the player begins the shift
+ * playing  — the shift is live
+ * debrief  — the shift timer ran out; grade + stats screen
+ * fired    — two crashes; failure screen
+ */
+export type GameStatus = 'briefing' | 'playing' | 'debrief' | 'fired';
 
-export interface DraftOption {
-  id: string;
-  title: string;
-  desc: string;
-}
-export interface DraftState {
-  options: DraftOption[];
+export type Grade = 'S' | 'A' | 'B' | 'C' | 'D' | 'F';
+
+/** Deterministic sim output events, drained by main each frame for audio/fx. */
+export type GameEvent =
+  | { kind: 'assign'; x: number; y: number }
+  | { kind: 'dispatch'; x: number; y: number }
+  | { kind: 'hold' }
+  | { kind: 'unhold' }
+  | { kind: 'land'; amount: number; x: number; y: number; streak: number }
+  | { kind: 'depart'; amount: number; x: number; y: number; streak: number }
+  | { kind: 'goAround'; amount: number; x: number; y: number }
+  | { kind: 'nearMiss'; amount: number; x: number; y: number }
+  | { kind: 'divert'; amount: number; x: number; y: number }
+  | { kind: 'crash'; x: number; y: number }
+  | { kind: 'emergency'; emergency: Emergency; callsign: string }
+  | { kind: 'rush' }
+  | { kind: 'finalRush' }
+  | { kind: 'shiftEnd'; grade: Grade }
+  | { kind: 'fired' };
+
+/** A predicted loss of separation (amber warning) for the renderer. */
+export interface PredictedConflict {
+  aId: number;
+  bId: number;
+  t: number; // seconds until closest approach
+  x: number; // predicted conflict point (midpoint at closest approach)
+  y: number;
 }
 
 export interface GameState {
   time: number;
   paused: boolean;
   status: GameStatus;
+  day: number; // career shift number (difficulty scales with it)
+  shiftLength: number; // seconds in this shift
+  grade: Grade | null; // set when the shift ends
 
   aircraft: Aircraft[];
   runways: Runway[];
@@ -128,24 +159,28 @@ export interface GameState {
   nearMisses: number;
   goArounds: number;
   diversions: number;
+  streak: number; // consecutive safe landings/departures (pay multiplier)
+  bestStreak: number;
 
   // spawning / ramp
   spawnAccumulator: number;
   nextSpawnInterval: number;
   nextRushAt: number;
   totalSpawned: number;
+  finalRushFired: boolean;
 
   // conflict bookkeeping: pairKey "a-b" -> seconds inside separation
   conflicts: Map<string, number>;
+  predicted: PredictedConflict[];
 
   // last crash marker for the renderer (id-less, world coords + ttl)
   crashFx: { x: number; y: number; ttl: number }[];
 
+  // deterministic output events (drained by main for audio / fx)
+  events: GameEvent[];
+
   // onboarding hint visibility
   showHint: boolean;
-
-  // M4-style end-of-shift draft (optional)
-  draft: DraftState | null;
 
   // id counters
   nextAircraftId: number;
@@ -188,4 +223,7 @@ export interface RenderHints {
   hoverRunwayId: number | null;
   hoverEnd: 0 | 1 | null;
   drag: DragHint | null;
+  hoverButtonId: string | null;
+  muted: boolean;
+  best: number;
 }

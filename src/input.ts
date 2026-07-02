@@ -1,17 +1,31 @@
-// input.ts — translates mouse/keyboard into player actions on the sim.
+// input.ts — translates pointer/keyboard into player actions on the sim.
 // Never advances time; only issues commands (legal while paused) and produces
-// RenderHints. Drag a plane onto a runway side (or click a plane, then click the
-// side) to clear it to land from that end; right-click = hold; Space = pause; R.
+// RenderHints. Pointer events cover mouse AND touch: drag a plane onto a runway
+// side (or tap a plane, then tap the side) to clear it to land from that end;
+// right-click or double-tap = hold; Space = pause; M = mute; R = restart.
 
-import { commandToRunway, restart, toggleHold } from './sim';
-import { sdk } from './sdk';
+import { commandToRunway, toggleHold } from './sim';
 import type { Aircraft, GameState, RenderHints, Vec, Viewport } from './types';
+import { buttonAt, endButtons, hudButtons, type UiButton, type UiContext } from './ui';
+
+export interface UiActions {
+  startShift(): void; // leave the briefing screen
+  nextShift(): void; // debrief -> next (harder) day
+  retryShift(): void; // debrief/fired -> replay this day
+  restartKey(): void; // R
+  togglePause(): void;
+  toggleMute(): void;
+  commandFeedback(): void; // small UI blip (select / button press)
+  unlockAudio(): void; // call on every user gesture
+  getMuted(): boolean;
+  getBest(): number;
+}
 
 export interface InputContext {
   canvas: HTMLCanvasElement;
   getState: () => GameState;
-  setState: (s: GameState) => void;
   getViewport: () => Viewport;
+  actions: UiActions;
 }
 
 export interface InputController {
@@ -30,7 +44,7 @@ function distToSeg(px: number, py: number, ax: number, ay: number, bx: number, b
 }
 
 export function createInput(ctx: InputContext): InputController {
-  const { canvas, getState, setState, getViewport } = ctx;
+  const { canvas, getState, getViewport, actions } = ctx;
 
   let pointerScreen: Vec | null = null;
   let pointerWorld: Vec | null = null;
@@ -40,7 +54,11 @@ export function createInput(ctx: InputContext): InputController {
   let downWorld: Vec | null = null;
   let dragging = false;
 
-  const toScreen = (e: MouseEvent): Vec => {
+  // double-tap detection (touch-friendly hold command)
+  let lastTapTime = 0;
+  let lastTapPlaneId: number | null = null;
+
+  const toScreen = (e: { clientX: number; clientY: number }): Vec => {
     const r = canvas.getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   };
@@ -48,6 +66,48 @@ export function createInput(ctx: InputContext): InputController {
     const vp = getViewport();
     return { x: (p.x - vp.offsetX) / vp.scale, y: (p.y - vp.offsetY) / vp.scale };
   };
+
+  function uiCtx(): UiContext {
+    const state = getState();
+    const sel = selectedId != null ? state.aircraft.find((a) => a.id === selectedId) : undefined;
+    const selAirborne = !!sel && (sel.phase === 'inbound' || sel.phase === 'holding' || sel.phase === 'approach');
+    return {
+      paused: state.paused,
+      muted: actions.getMuted(),
+      status: state.status,
+      selectedAirborne: selAirborne,
+      selectedHolding: !!sel && sel.phase === 'holding',
+    };
+  }
+  function allButtons(): UiButton[] {
+    const state = getState();
+    const vp = getViewport();
+    return [...hudButtons(vp, uiCtx()), ...endButtons(vp, state.status)];
+  }
+
+  function pressButton(b: UiButton): void {
+    actions.commandFeedback();
+    const state = getState();
+    switch (b.id) {
+      case 'pause':
+        actions.togglePause();
+        break;
+      case 'mute':
+        actions.toggleMute();
+        break;
+      case 'hold':
+        if (selectedId != null) toggleHold(state, selectedId);
+        break;
+      case 'primary':
+        actions.nextShift();
+        selectedId = null;
+        break;
+      case 'retry':
+        actions.retryShift();
+        selectedId = null;
+        break;
+    }
+  }
 
   function planeAt(world: Vec): Aircraft | null {
     const state = getState();
@@ -94,33 +154,64 @@ export function createInput(ctx: InputContext): InputController {
     return getState().aircraft.some((a) => a.id === selectedId) ? selectedId : (selectedId = null);
   }
 
-  // --- mouse ---
-  function onMouseDown(e: MouseEvent): void {
+  // --- pointer (mouse + touch) ---
+  function onPointerDown(e: PointerEvent | MouseEvent): void {
+    actions.unlockAudio();
     pointerScreen = toScreen(e);
     pointerWorld = screenToWorld(pointerScreen);
-    if (e.button === 2) return;
+    if ((e as MouseEvent).button === 2) return;
     const state = getState();
-    if (state.status === 'gameover') return;
+
+    // menu screens: buttons, or anywhere to start
+    if (state.status === 'briefing') {
+      actions.commandFeedback();
+      actions.startShift();
+      return;
+    }
+    if (state.status === 'debrief' || state.status === 'fired') {
+      const b = buttonAt(allButtons(), pointerScreen.x, pointerScreen.y);
+      if (b) pressButton(b);
+      return;
+    }
+
+    // in-game HUD buttons take priority over the scope
+    const b = buttonAt(allButtons(), pointerScreen.x, pointerScreen.y);
+    if (b) {
+      pressButton(b);
+      return;
+    }
 
     const plane = planeAt(pointerWorld);
     if (plane) {
+      // double-tap/double-click a plane -> hold
+      const now = Date.now();
+      if (lastTapPlaneId === plane.id && now - lastTapTime < 350) {
+        toggleHold(state, plane.id);
+        lastTapTime = 0;
+        lastTapPlaneId = null;
+      } else {
+        lastTapTime = now;
+        lastTapPlaneId = plane.id;
+      }
       downPlaneId = plane.id;
       downWorld = pointerWorld;
       dragging = false;
       return;
     }
+    lastTapPlaneId = null;
 
     // empty / runway click acts on the current selection
     const sel = validSelected();
     if (sel != null) {
       const re = runwayEndAt(pointerWorld);
       if (re) commandToRunway(state, sel, re.runwayId, re.end);
+      else selectedId = null; // tap on empty space deselects
     } else {
       selectedId = null;
     }
   }
 
-  function onMouseMove(e: MouseEvent): void {
+  function onPointerMove(e: PointerEvent | MouseEvent): void {
     pointerScreen = toScreen(e);
     pointerWorld = screenToWorld(pointerScreen);
     if (downPlaneId != null && downWorld && !dragging) {
@@ -128,10 +219,10 @@ export function createInput(ctx: InputContext): InputController {
     }
   }
 
-  function onMouseUp(e: MouseEvent): void {
+  function onPointerUp(e: PointerEvent | MouseEvent): void {
     pointerScreen = toScreen(e);
     pointerWorld = screenToWorld(pointerScreen);
-    if (e.button === 2) return;
+    if ((e as MouseEvent).button === 2) return;
 
     if (downPlaneId != null) {
       const state = getState();
@@ -141,7 +232,8 @@ export function createInput(ctx: InputContext): InputController {
         if (re) commandToRunway(state, downPlaneId, re.runwayId, re.end);
         selectedId = downPlaneId;
       } else {
-        selectedId = downPlaneId; // a click selects
+        selectedId = downPlaneId; // a tap selects
+        actions.commandFeedback();
       }
     }
     downPlaneId = null;
@@ -153,7 +245,7 @@ export function createInput(ctx: InputContext): InputController {
     e.preventDefault();
     const world = screenToWorld(toScreen(e));
     const state = getState();
-    if (state.status === 'gameover') return;
+    if (state.status !== 'playing') return;
     const plane = planeAt(world);
     if (plane) toggleHold(state, plane.id);
   }
@@ -163,17 +255,19 @@ export function createInput(ctx: InputContext): InputController {
     const state = getState();
     if (e.code === 'Space') {
       e.preventDefault();
-      if (state.status === 'playing') {
-        state.paused = !state.paused;
-        if (state.paused) sdk.gameplayStop();
-        else sdk.gameplayStart();
-      }
+      actions.unlockAudio();
+      if (state.status === 'briefing') actions.startShift();
+      else if (state.status === 'playing') actions.togglePause();
+      else actions.retryShift();
+      return;
+    }
+    if (e.code === 'KeyM') {
+      actions.toggleMute();
       return;
     }
     if (e.code === 'KeyR') {
-      setState(restart(getState().rngSeed));
+      actions.restartKey();
       selectedId = null;
-      sdk.gameplayStart();
     }
   }
 
@@ -183,9 +277,15 @@ export function createInput(ctx: InputContext): InputController {
     let hoverAircraftId: number | null = null;
     let hoverRunwayId: number | null = null;
     let hoverEnd: 0 | 1 | null = null;
+    let hoverButtonId: string | null = null;
     let drag: RenderHints['drag'] = null;
 
-    if (pointerWorld && state.status === 'playing') {
+    if (pointerScreen) {
+      const hb = buttonAt(allButtons(), pointerScreen.x, pointerScreen.y);
+      hoverButtonId = hb ? hb.id : null;
+    }
+
+    if (pointerWorld && state.status === 'playing' && hoverButtonId == null) {
       const hp = planeAt(pointerWorld);
       hoverAircraftId = hp ? hp.id : null;
       const re = runwayEndAt(pointerWorld);
@@ -206,12 +306,22 @@ export function createInput(ctx: InputContext): InputController {
       }
     }
 
-    return { pointerWorld, hoverAircraftId, hoverRunwayId, hoverEnd, selectedAircraftId: validSelected(), drag };
+    return {
+      pointerWorld,
+      hoverAircraftId,
+      hoverRunwayId,
+      hoverEnd,
+      selectedAircraftId: validSelected(),
+      drag,
+      hoverButtonId,
+      muted: actions.getMuted(),
+      best: actions.getBest(),
+    };
   }
 
-  canvas.addEventListener('mousedown', onMouseDown);
-  window.addEventListener('mousemove', onMouseMove);
-  window.addEventListener('mouseup', onMouseUp);
+  canvas.addEventListener('pointerdown', onPointerDown as EventListener);
+  window.addEventListener('pointermove', onPointerMove as EventListener);
+  window.addEventListener('pointerup', onPointerUp as EventListener);
   canvas.addEventListener('contextmenu', onContextMenu);
   window.addEventListener('keydown', onKeyDown);
 
@@ -219,9 +329,9 @@ export function createInput(ctx: InputContext): InputController {
     hints,
     pointerScreen: () => pointerScreen,
     dispose: () => {
-      canvas.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
+      canvas.removeEventListener('pointerdown', onPointerDown as EventListener);
+      window.removeEventListener('pointermove', onPointerMove as EventListener);
+      window.removeEventListener('pointerup', onPointerUp as EventListener);
       canvas.removeEventListener('contextmenu', onContextMenu);
       window.removeEventListener('keydown', onKeyDown);
     },
