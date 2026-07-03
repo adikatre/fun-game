@@ -16,9 +16,8 @@ export const CONFIG = {
   //     travel direction; the reciprocal end is the opposite. ---
   approachLength: 450, // length of each final-approach corridor (px)
   runways: [
-    { cx: 680, cy: 360, headingDeg: 180, length: 240, side: 'L' as const },
-    { cx: 680, cy: 520, headingDeg: 180, length: 240, side: 'R' as const },
-    { cx: 680, cy: 680, headingDeg: 180, length: 240, side: 'C' as const },
+    { cx: 750, cy: 500, headingDeg: 180, length: 300, side: '' as const },
+    { cx: 750, cy: 500, headingDeg: 90, length: 240, side: '' as const },
   ],
 
   // --- runway expansion slots (purchasable via tech tree) ---
@@ -105,23 +104,27 @@ export const CONFIG = {
 
   // --- ground ops (terminal sits south of the middle runway) ---
   gates: [
-    { x: 580, y: 440 },
-    { x: 630, y: 440 },
-    { x: 680, y: 440 },
-    { x: 730, y: 440 },
-    { x: 780, y: 440 },
-    { x: 830, y: 440 },
+    // Terminal 1 (Top Right)
+    { x: 800, y: 400 },
+    { x: 850, y: 400 },
+    { x: 900, y: 400 },
+    // Terminal 2 (Bottom Left)
+    { x: 600, y: 600 },
+    { x: 650, y: 600 },
+    { x: 700, y: 600 },
   ],
   // gate expansion slots (purchasable)
   gateExpansionSlots: [
-    { x: 580, y: 600 },
-    { x: 630, y: 600 },
-    { x: 680, y: 600 },
-    { x: 730, y: 600 },
-    { x: 780, y: 600 },
-    { x: 830, y: 600 },
+    // Terminal 1 Expansion
+    { x: 800, y: 350 },
+    { x: 850, y: 350 },
+    { x: 900, y: 350 },
+    // Terminal 2 Expansion
+    { x: 600, y: 650 },
+    { x: 650, y: 650 },
+    { x: 700, y: 650 },
   ],
-  rampWait: { x: 900, y: 440 }, // where arrivals idle if every gate is full
+  rampWait: { x: 850, y: 450 }, // where arrivals idle if every gate is full
   taxiSpeed: 26, // ground speed (px/s) — deliberately slow
   groundSeparation: 22, // taxiing planes stop to avoid overlapping the one ahead
   turnaroundSeconds: 13, // gate time (deplane / refuel / board) before it can depart
