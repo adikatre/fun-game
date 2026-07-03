@@ -245,6 +245,7 @@ function makeAircraft(state: GameState, fuelMult: number): Aircraft {
     y,
     heading,
     speed: t.speed,
+    speedTarget: 'normal',
     cruiseSpeed: t.speed,
     turnRate: deg(t.turnRateDeg),
     wake: t.wake,
@@ -256,6 +257,7 @@ function makeAircraft(state: GameState, fuelMult: number): Aircraft {
     assignedRunwayId: null,
     assignedEnd: null,
     holdCenter: null,
+    manualHold: false,
     gateId: null,
     taxiTarget: null,
     turnaround: 0,
@@ -374,6 +376,30 @@ export function authorizeCrossing(state: GameState, aircraftId: number): boolean
   }
 
   state.events.push({ kind: 'crossRunway', x: ac.x, y: ac.y });
+  return true;
+}
+
+export function setSpeed(state: GameState, aircraftId: number, target: 'slow' | 'normal' | 'expedite'): boolean {
+  const ac = findAircraft(state, aircraftId);
+  if (!ac || !isAirborneArrival(ac)) return false;
+  ac.speedTarget = target;
+  state.events.push({ kind: 'setSpeed', target, x: ac.x, y: ac.y });
+  return true;
+}
+
+export function toggleManualHold(state: GameState, aircraftId: number): boolean {
+  const ac = findAircraft(state, aircraftId);
+  if (!ac || (ac.phase !== 'taxiIn' && ac.phase !== 'taxiOut')) return false;
+  ac.manualHold = !ac.manualHold;
+  state.events.push({ kind: 'manualHold', hold: ac.manualHold, x: ac.x, y: ac.y });
+  return true;
+}
+
+export function commandGoAround(state: GameState, aircraftId: number): boolean {
+  const ac = findAircraft(state, aircraftId);
+  if (!ac || (ac.phase !== 'approach' && ac.phase !== 'landing')) return false;
+  // If we're already decelerating hard on the runway, we might not be able to abort, but we allow it for now.
+  goAround(state, ac);
   return true;
 }
 
@@ -785,7 +811,10 @@ function stepAircraft(state: GameState, ac: Aircraft, dt: number, turnaroundMult
     if (r < CONFIG.holdRadius * 0.85) desired -= 0.4;
     else if (r > CONFIG.holdRadius * 1.15) desired += 0.4;
     ac.heading = turnToward(ac.heading, desired, ac.turnRate * dt);
-    ac.speed = ac.cruiseSpeed;
+    
+    // apply speed targets during holding
+    const ts = ac.speedTarget === 'slow' ? ac.cruiseSpeed * 0.65 : ac.speedTarget === 'expedite' ? ac.cruiseSpeed * 1.35 : ac.cruiseSpeed;
+    ac.speed = lerp(ac.speed, ts, 1.5 * dt);
   } else if (ac.phase === 'landing') {
     ac.speed = Math.max(CONFIG.taxiSpeed, ac.speed - ac.landDecel * dt);
   } else if (ac.phase === 'departing') {
@@ -797,14 +826,16 @@ function stepAircraft(state: GameState, ac: Aircraft, dt: number, turnaroundMult
     const t = ac.taxiTarget;
     if (t) {
       ac.heading = Math.atan2(t.y - ac.y, t.x - ac.x);
-      ac.speed = groundBlockedAhead(state, ac) ? 0 : CONFIG.taxiSpeed;
+      ac.speed = (ac.manualHold || groundBlockedAhead(state, ac)) ? 0 : CONFIG.taxiSpeed;
     } else ac.speed = 0;
   } else if (ac.phase === 'waitCross') {
     ac.speed = 0; // waiting for player authorization
   } else if (ac.phase === 'atGate' || ac.phase === 'readyDep' || ac.phase === 'holdShort') {
     ac.speed = 0;
   } else {
-    ac.speed = ac.cruiseSpeed; // inbound flies straight
+    // inbound flies straight, seeking speed target
+    const ts = ac.speedTarget === 'slow' ? ac.cruiseSpeed * 0.65 : ac.speedTarget === 'expedite' ? ac.cruiseSpeed * 1.35 : ac.cruiseSpeed;
+    ac.speed = lerp(ac.speed, ts, 1.5 * dt);
   }
 
   // --- advance position ---

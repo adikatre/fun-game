@@ -50,6 +50,7 @@ export interface Aircraft {
   y: number;
   heading: number; // radians; 0 = +x (east), increases clockwise (screen y-down)
   speed: number; // current world px/s
+  speedTarget: 'slow' | 'normal' | 'expedite';
   cruiseSpeed: number;
   turnRate: number; // radians/s
   wake: number; // separation multiplier
@@ -61,6 +62,7 @@ export interface Aircraft {
   assignedRunwayId: number | null;
   assignedEnd: 0 | 1 | null; // landing/takeoff end of the assigned runway
   holdCenter: Vec | null;
+  manualHold: boolean; // true if player explicitly commanded ground hold
   // ground state
   gateId: number | null; // gate currently occupied / heading to
   taxiTarget: Vec | null; // current ground destination (gate / ramp / lineup)
@@ -145,6 +147,8 @@ export type GameEvent =
   | { kind: 'groundCrash'; x: number; y: number }
   | { kind: 'emergency'; emergency: Emergency; callsign: string }
   | { kind: 'crossRunway'; x: number; y: number }
+  | { kind: 'setSpeed'; target: 'slow' | 'normal' | 'expedite'; x: number; y: number }
+  | { kind: 'manualHold'; hold: boolean; x: number; y: number }
   | { kind: 'rush' }
   | { kind: 'finalRush' }
   | { kind: 'shiftEnd'; grade: Grade }

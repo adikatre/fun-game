@@ -17,18 +17,19 @@ export const CONFIG = {
   approachLength: 450, // length of each final-approach corridor (px)
   runways: [
     { cx: 750, cy: 500, headingDeg: 180, length: 300, side: '' as const },
-    { cx: 750, cy: 500, headingDeg: 90, length: 240, side: '' as const },
   ],
 
   // --- runway expansion slots (purchasable via tech tree) ---
   // Each slot defines a new runway that can be added. They get progressively more
   // angled/crossing, creating intersection complexity.
   runwayExpansionSlots: [
-    // Slot 4: slightly angled, crosses runway 2
+    // Slot 2: Perpendicular runway (was previously a starting runway)
+    { cx: 750, cy: 500, headingDeg: 90, length: 240, side: '' as const },
+    // Slot 3: slightly angled, crosses runway 2
     { cx: 730, cy: 440, headingDeg: 135, length: 240, side: 'X' as const },
-    // Slot 5: steeper angle, crosses runways 1 and 3
+    // Slot 4: steeper angle, crosses runways 1 and 3
     { cx: 770, cy: 580, headingDeg: 225, length: 240, side: 'Y' as const },
-    // Slot 6: perpendicular crosswind runway
+    // Slot 5: perpendicular crosswind runway
     { cx: 690, cy: 520, headingDeg: 90, length: 220, side: 'Z' as const },
   ],
 
@@ -108,13 +109,13 @@ export const CONFIG = {
     { x: 800, y: 400 },
     { x: 850, y: 400 },
     { x: 900, y: 400 },
-    // Terminal 2 (Bottom Left)
-    { x: 600, y: 600 },
-    { x: 650, y: 600 },
-    { x: 700, y: 600 },
   ],
   // gate expansion slots (purchasable)
   gateExpansionSlots: [
+    // Terminal 2 (Bottom Left) - First Expansion
+    { x: 600, y: 600 },
+    { x: 650, y: 600 },
+    { x: 700, y: 600 },
     // Terminal 1 Expansion
     { x: 800, y: 350 },
     { x: 850, y: 350 },

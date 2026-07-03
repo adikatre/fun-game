@@ -3,11 +3,13 @@
 // Upgrades persist across shifts via localStorage.
 
 export type UpgradeId =
+  | 'runway_2'
+  | 'runway_3'
   | 'runway_4'
   | 'runway_5'
-  | 'runway_6'
   | 'gates_1'
   | 'gates_2'
+  | 'gates_3'
   | 'weather_radar'
   | 'radar_range_1'
   | 'radar_range_2'
@@ -34,48 +36,66 @@ export interface UpgradeState {
 export const UPGRADE_DEFS: UpgradeDef[] = [
   // --- Runways ---
   {
-    id: 'runway_4',
-    name: 'Runway 4',
-    description: 'Add a diagonal runway (crosses existing strips)',
-    cost: 3000,
+    id: 'runway_2',
+    name: 'Runway 2',
+    description: 'Add a perpendicular runway to increase arrival capacity',
+    cost: 1500,
     icon: '🛬',
     category: 'runway',
   },
   {
-    id: 'runway_5',
-    name: 'Runway 5',
-    description: 'Add a second diagonal runway (more intersections)',
-    cost: 5000,
+    id: 'runway_3',
+    name: 'Runway 3',
+    description: 'Add a diagonal runway (crosses existing strips)',
+    cost: 3000,
     icon: '🛫',
-    requires: 'runway_4',
+    requires: 'runway_2',
     category: 'runway',
   },
   {
-    id: 'runway_6',
+    id: 'runway_4',
+    name: 'Runway 4',
+    description: 'Add a second diagonal runway (more intersections)',
+    cost: 5000,
+    icon: '✈️',
+    requires: 'runway_3',
+    category: 'runway',
+  },
+  {
+    id: 'runway_5',
     name: 'Crosswind Runway',
     description: 'Add a perpendicular crosswind runway (maximum complexity)',
     cost: 8000,
-    icon: '✈️',
-    requires: 'runway_5',
+    icon: '🌪️',
+    requires: 'runway_4',
     category: 'runway',
   },
 
   // --- Gates ---
   {
     id: 'gates_1',
-    name: 'Gate Expansion I',
-    description: '+3 gates — more turnaround capacity',
-    cost: 1500,
+    name: 'Terminal 2',
+    description: '+3 gates — open a new terminal',
+    cost: 1000,
     icon: '🏗️',
     category: 'gates',
   },
   {
     id: 'gates_2',
-    name: 'Gate Expansion II',
-    description: '+3 more gates — total of 12',
-    cost: 2500,
+    name: 'Gate Expansion I',
+    description: '+3 more gates at Terminal 1',
+    cost: 2000,
     icon: '🏢',
     requires: 'gates_1',
+    category: 'gates',
+  },
+  {
+    id: 'gates_3',
+    name: 'Gate Expansion II',
+    description: '+3 more gates at Terminal 2',
+    cost: 3500,
+    icon: '🏙️',
+    requires: 'gates_2',
     category: 'gates',
   },
 
@@ -142,8 +162,8 @@ export const UPGRADE_DEFS: UpgradeDef[] = [
 export function createUpgradeState(): UpgradeState {
   return {
     purchased: new Set(),
-    totalCashEarned: 0,
-    bankBalance: 0,
+    totalCashEarned: 1500, // starting bonus to afford early upgrades
+    bankBalance: 1500,
   };
 }
 
@@ -177,9 +197,10 @@ export function purchaseUpgrade(state: UpgradeState, id: UpgradeId): boolean {
 /** How many extra runways the player has purchased. */
 export function extraRunwayCount(state: UpgradeState): number {
   let count = 0;
+  if (state.purchased.has('runway_2')) count++;
+  if (state.purchased.has('runway_3')) count++;
   if (state.purchased.has('runway_4')) count++;
   if (state.purchased.has('runway_5')) count++;
-  if (state.purchased.has('runway_6')) count++;
   return count;
 }
 
@@ -188,6 +209,7 @@ export function extraGateCount(state: UpgradeState): number {
   let count = 0;
   if (state.purchased.has('gates_1')) count += 3;
   if (state.purchased.has('gates_2')) count += 3;
+  if (state.purchased.has('gates_3')) count += 3;
   return count;
 }
 

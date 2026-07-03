@@ -4,9 +4,9 @@
 // side (or tap a plane, then tap the side) to clear it to land from that end;
 // right-click or double-tap = hold; Space = pause; M = mute; R = restart.
 
-import { commandToRunway, toggleHold } from './sim';
+import { commandToRunway, toggleHold, setSpeed, commandGoAround, toggleManualHold } from './sim';
 import type { Aircraft, GameState, RenderHints, Vec, Viewport } from './types';
-import { buttonAt, endButtons, hudButtons, upgradeButtons, type UiButton, type UiContext } from './ui';
+import { buttonAt, endButtons, hudButtons, upgradeButtons, floatingButtons, type UiButton, type UiContext } from './ui';
 import { UPGRADE_DEFS, type UpgradeState } from './upgrades';
 
 export interface UiActions {
@@ -76,6 +76,14 @@ export function createInput(ctx: InputContext): InputController {
     const state = getState();
     const sel = selectedId != null ? state.aircraft.find((a) => a.id === selectedId) : undefined;
     const selAirborne = !!sel && (sel.phase === 'inbound' || sel.phase === 'holding' || sel.phase === 'approach');
+    const selTaxi = !!sel && (sel.phase === 'taxiIn' || sel.phase === 'taxiOut' || sel.phase === 'waitCross');
+    
+    let selectedScreenPos: Vec | undefined;
+    if (sel) {
+      const vp = getViewport();
+      selectedScreenPos = { x: sel.x * vp.scale + vp.offsetX, y: sel.y * vp.scale + vp.offsetY };
+    }
+    
     return {
       paused: state.paused,
       muted: actions.getMuted(),
@@ -83,13 +91,18 @@ export function createInput(ctx: InputContext): InputController {
       selectedAirborne: selAirborne,
       selectedHolding: !!sel && sel.phase === 'holding',
       selectedWaitCross: !!sel && sel.phase === 'waitCross',
+      selectedTaxi: selTaxi,
+      selectedSpeedTarget: sel?.speedTarget,
+      selectedManualHold: sel?.manualHold,
+      selectedScreenPos,
     };
   }
   function allButtons(): UiButton[] {
     const state = getState();
     const vp = getViewport();
     if (state.status === 'upgrade') return upgradeButtons(vp);
-    return [...hudButtons(vp, uiCtx()), ...endButtons(vp, state.status)];
+    const uictx = uiCtx();
+    return [...hudButtons(vp, uictx), ...endButtons(vp, state.status), ...floatingButtons(vp, uictx)];
   }
 
   function upgradeAt(sx: number, sy: number): string | null {
@@ -153,6 +166,22 @@ export function createInput(ctx: InputContext): InputController {
       case 'retry':
         actions.retryShift();
         selectedId = null;
+        break;
+      case 'speed_slow':
+        if (selectedId != null) setSpeed(state, selectedId, 'slow');
+        break;
+      case 'speed_normal':
+        if (selectedId != null) setSpeed(state, selectedId, 'normal');
+        break;
+      case 'speed_expedite':
+        if (selectedId != null) setSpeed(state, selectedId, 'expedite');
+        break;
+      case 'go_around':
+        if (selectedId != null) commandGoAround(state, selectedId);
+        break;
+      case 'taxi_hold':
+      case 'taxi_continue':
+        if (selectedId != null) toggleManualHold(state, selectedId);
         break;
     }
   }

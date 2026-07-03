@@ -59,6 +59,15 @@ g.requestAnimationFrame = (cb: (now: number) => void) => {
   rafCb = cb;
   return 1;
 };
+g.localStorage = {
+  getItem: (key: string) => {
+    if (key === 'fa.upgrades') {
+      return JSON.stringify({ purchased: ['runway_2', 'gates_1'], bankBalance: 1500, totalCashEarned: 1500 });
+    }
+    return null;
+  },
+  setItem: () => {},
+};
 
 let nowMs = 0;
 export function drive(frames: number, msPerFrame = 16.7): void {

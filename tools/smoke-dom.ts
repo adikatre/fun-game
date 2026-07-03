@@ -33,6 +33,12 @@ try {
   // drag ready-to-depart planes to a runway to launch them (the full ground loop).
   for (let i = 0; i < 40; i++) {
     const s = getGame();
+    const wc = s.aircraft.find((a: any) => a.phase === 'waitCross');
+    if (wc) {
+      fireClick({ x: wc.x, y: wc.y });
+      fireScreenClick({ x: 1280 - 130, y: 800 - 138 }); // click authorize cross
+    }
+
     const rwA = s.runways[i % s.runways.length];
     const arr = s.aircraft.find((a: any) => a.assignedRunwayId == null && (a.phase === 'inbound' || a.phase === 'holding'));
     if (arr) {
@@ -42,8 +48,10 @@ try {
     const dep = s.aircraft.find((a: any) => a.phase === 'readyDep');
     if (dep) {
       const rwD = s.runways[(i + 1) % s.runways.length];
-      const end = nearestEnd(dep, rwD);
-      fireDrag({ x: dep.x, y: dep.y }, { x: rwD.ends[end].threshold.x, y: rwD.ends[end].threshold.y });
+      if (rwD !== rwA || !s.aircraft.find((a: any) => a.phase === 'landing' && a.assignedRunwayId === rwD.id)) {
+        const end = nearestEnd(dep, rwD);
+        fireDrag({ x: dep.x, y: dep.y }, { x: rwD.ends[end].threshold.x, y: rwD.ends[end].threshold.y });
+      }
     }
     drive(120);
   }

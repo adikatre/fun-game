@@ -41,6 +41,8 @@ npm run smoke      # runs real render/input/main against a stubbed DOM (no brows
 | --- | --- |
 | **Drag a plane to a runway side** | If airborne: clear it to land from that end. If it's a **ready (cyan) departure** at a gate: launch it in that direction. Each runway works **both** directions |
 | **Tap a plane, then tap a runway side** | Same, as two taps |
+| **Click an airborne plane** | Opens floating menu: **Slow / Norm / Exp** to adjust speed, or **Abort** to go-around |
+| **Click a taxiing plane** | Opens floating menu: **Hold / Go** to manually stop or resume ground taxi |
 | **Right-click / double-tap a plane** | Enter / leave a holding orbit (airborne only) |
 | **Space** | Pause / resume — **you can still clear, dispatch, and hold while paused** |
 | **M** | Mute / unmute · **R** restarts the shift |
@@ -54,8 +56,15 @@ auto-clears traffic; `?ff=<seconds>` fast-forwards the sim at load.
 - **A session with a shape**: calm onboarding → density ramp → rush waves → a
   **FINAL RUSH** in the last 75 s → **debrief with a letter grade** (S–F, scaled
   to your career day), career-best tracking, and a next-day difficulty bump.
+- **Base-Building & Progression**: Start your career at a tiny airfield with a single
+  runway and 3 gates. Use your shift earnings in the **upgrade shop** to unlock
+  new runways (creating complex intersections), new gate terminals, and advanced radar tech!
 - **Streak economy**: consecutive safe landings/departures multiply pay (up to
   ×2); any near-miss, diversion, or crash resets it.
+- **Advanced Air & Ground Control**: Click planes to open a floating context menu.
+  Command airborne planes to **Slow** or **Expedite** to fine-tune spacing, or
+  order an **Abort** for an immediate go-around. Command taxiing planes to **Hold Short**
+  or **Continue Taxi** to resolve ground deadlocks.
 - **Predictive conflict alerts**: closures are projected ~12 s ahead — an amber
   ✕ marks *where* separation will be lost and in how many seconds, before the
   red alert (with visible countdown-to-collision ring) ever starts.
@@ -64,7 +73,7 @@ auto-clears traffic; `?ff=<seconds>` fast-forwards the sim at load.
   zero asset files.
 - **Juice**: floating +$ popups, screen shake, incident flash, event banners,
   animated cash counter, radar sweep.
-- **Two runways, each usable from either end** (four approach corridors);
+- **Runways work from either end** (four approach corridors per runway);
   landings and takeoffs share the strips, so you sequence two streams over one
   resource. Gates, taxi, turnarounds, and departures make every arrival worth
   two payouts.
@@ -101,6 +110,7 @@ tools/
 
 ## Deferred ideas
 
-A real taxiway network with runway-crossing conflicts, weather cells, speed
-controls (the real controller's spacing tool), a shared daily-seed challenge
-board, and end-of-shift upgrade drafts.
+## Deferred ideas
+
+Weather cells to route around, a shared daily-seed challenge board, and more
+complex progressive taxi routing.

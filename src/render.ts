@@ -5,9 +5,9 @@
 import { CONFIG, PALETTE, dayDifficulty } from './config';
 import type { Fx } from './fx';
 import { AIRBORNE_PHASES } from './types';
-import type { Aircraft, GameState, RenderHints, Runway, Viewport } from './types';
+import type { Aircraft, GameState, RenderHints, Runway, Viewport, Vec } from './types';
 import { UPGRADE_DEFS, isUnlocked, canPurchase } from './upgrades';
-import { endButtons, hudButtons, upgradeButtons, type UiButton, type UiContext } from './ui';
+import { endButtons, hudButtons, upgradeButtons, floatingButtons, type UiButton, type UiContext } from './ui';
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
@@ -26,9 +26,18 @@ function typeHalfSize(t: Aircraft['type']): number {
   return t === 'heavy' ? 12 : t === 'medium' ? 9.5 : 7.5;
 }
 
-function uiContext(state: GameState, hints: RenderHints): UiContext {
+function uiContext(state: GameState, hints: RenderHints, vp: Viewport, alpha: number): UiContext {
   const sel = hints.selectedAircraftId != null ? state.aircraft.find((a) => a.id === hints.selectedAircraftId) : undefined;
   const selAirborne = !!sel && (sel.phase === 'inbound' || sel.phase === 'holding' || sel.phase === 'approach');
+  const selTaxi = !!sel && (sel.phase === 'taxiIn' || sel.phase === 'taxiOut' || sel.phase === 'waitCross');
+  
+  let selectedScreenPos: Vec | undefined;
+  if (sel) {
+    const x = lerp(sel.ppx, sel.px, alpha);
+    const y = lerp(sel.ppy, sel.py, alpha);
+    selectedScreenPos = { x: x * vp.scale + vp.offsetX, y: y * vp.scale + vp.offsetY };
+  }
+  
   return {
     paused: state.paused,
     muted: hints.muted,
@@ -36,13 +45,18 @@ function uiContext(state: GameState, hints: RenderHints): UiContext {
     selectedAirborne: selAirborne,
     selectedHolding: !!sel && sel.phase === 'holding',
     selectedWaitCross: !!sel && sel.phase === 'waitCross',
+    selectedTaxi: selTaxi,
+    selectedSpeedTarget: sel?.speedTarget,
+    selectedManualHold: sel?.manualHold,
+    selectedScreenPos,
   };
 }
 
 /** All buttons currently on screen (render + input share this). */
-export function visibleButtons(state: GameState, vp: Viewport, hints: RenderHints): UiButton[] {
+export function visibleButtons(state: GameState, vp: Viewport, hints: RenderHints, alpha: number = 1): UiButton[] {
   if (state.status === 'upgrade') return upgradeButtons(vp);
-  return [...hudButtons(vp, uiContext(state, hints)), ...endButtons(vp, state.status)];
+  const uictx = uiContext(state, hints, vp, alpha);
+  return [...hudButtons(vp, uictx), ...endButtons(vp, state.status), ...floatingButtons(vp, uictx)];
 }
 
 // ----------------------------------------------------------------------------
@@ -109,7 +123,7 @@ export function render(
   else if (state.status === 'fired') drawFired(ctx, state, vp, hints, nowSec);
   else if (state.status === 'upgrade') drawUpgradeScreen(ctx, state, vp, hints, nowSec);
 
-  drawButtons(ctx, state, vp, hints);
+  drawButtons(ctx, state, vp, hints, alpha);
 }
 
 // ----------------------------------------------------------------------------
@@ -1222,11 +1236,17 @@ function drawUpgradeScreen(ctx: CanvasRenderingContext2D, _state: GameState, vp:
   void nowSec;
 }
 
-function drawButtons(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewport, hints: RenderHints): void {
-  const buttons = visibleButtons(state, vp, hints);
+function drawButtons(
+  ctx: CanvasRenderingContext2D,
+  state: GameState,
+  vp: Viewport,
+  hints: RenderHints,
+  alpha: number = 1,
+): void {
+  const btns = visibleButtons(state, vp, hints, alpha);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  for (const b of buttons) {
+  for (const b of btns) {
     const hovered = hints.hoverButtonId === b.id;
     const primary = b.id === 'primary' || b.id === 'shop_done';
 
