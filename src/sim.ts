@@ -301,7 +301,13 @@ export function assignApproach(state: GameState, aircraftId: number, runwayId: n
   ac.assignedRunwayId = rw.id;
   ac.assignedEnd = end;
   ac.holdCenter = null;
-  ac.waypoints = [{ ...re.finalEntry }, { ...re.threshold }];
+  const dx = Math.cos(re.dir);
+  const dy = Math.sin(re.dir);
+  const iaf = {
+    x: re.finalEntry.x - dx * 350,
+    y: re.finalEntry.y - dy * 350,
+  };
+  ac.waypoints = [iaf, { ...re.finalEntry }, { ...re.threshold }];
   state.events.push({ kind: 'assign', x: ac.x, y: ac.y });
   return true;
 }
@@ -407,7 +413,13 @@ function attemptLanding(state: GameState, ac: Aircraft, rw: Runway, end: 0 | 1):
     rw.occupiedUntil = state.time + ac.landTimer;
   } else if (ac.emergency === 'medical') {
     // medical can't go around — re-fly the approach (tight retry)
-    ac.waypoints = [{ ...re.finalEntry }, { ...re.threshold }];
+    const dx = Math.cos(re.dir);
+    const dy = Math.sin(re.dir);
+    const iaf = {
+      x: re.finalEntry.x - dx * 350,
+      y: re.finalEntry.y - dy * 350,
+    };
+    ac.waypoints = [iaf, { ...re.finalEntry }, { ...re.threshold }];
   } else {
     goAround(state, ac);
   }
