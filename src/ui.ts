@@ -4,7 +4,7 @@
 import type { GameState, Rect, Viewport, Vec } from './types';
 
 export interface UiButton extends Rect {
-  id: 'pause' | 'mute' | 'hold' | 'primary' | 'retry' | 'cross' | 'shop_done' | 'speed_slow' | 'speed_normal' | 'speed_expedite' | 'go_around' | 'taxi_hold' | 'taxi_continue';
+  id: 'pause' | 'mute' | 'hold' | 'primary' | 'retry' | 'cross' | 'shop_done' | 'speed_slow' | 'speed_normal' | 'speed_expedite' | 'go_around' | 'taxi_hold' | 'taxi_continue' | 'takeoff' | 'vector_left' | 'vector_right' | 'vector_cancel';
   label: string;
 }
 
@@ -16,7 +16,9 @@ export interface UiContext {
   selectedHolding: boolean;
   selectedWaitCross: boolean; // a ground plane waiting to cross a runway
   selectedTaxi: boolean; // a ground plane taxiing
+  selectedTakeoff: boolean; // a plane lined up and waiting for takeoff
   selectedSpeedTarget?: 'slow' | 'normal' | 'expedite';
+  selectedVectorTarget?: number | null;
   selectedManualHold?: boolean;
   selectedScreenPos?: Vec;
 }
@@ -81,12 +83,19 @@ export function floatingButtons(vp: Viewport, ui: UiContext): UiButton[] {
     x += w + pad;
   };
 
-  if (ui.selectedAirborne) {
+  if (ui.selectedTakeoff) {
+    add('takeoff', 'TAKEOFF', 80);
+  } else if (ui.selectedAirborne) {
     const spd = ui.selectedSpeedTarget;
     add('speed_slow', spd === 'slow' ? '▶ SLOW' : 'SLOW', 65);
     add('speed_normal', spd === 'normal' ? '▶ NORM' : 'NORM', 65);
     add('speed_expedite', spd === 'expedite' ? '▶ EXP' : 'EXP', 65);
     add('go_around', 'ABORT', 70);
+    add('vector_left', '⬅', 40);
+    add('vector_right', '➡', 40);
+    if (ui.selectedVectorTarget != null) {
+      add('vector_cancel', '✕', 40);
+    }
   } else if (ui.selectedTaxi) {
     add('taxi_hold', ui.selectedManualHold ? '▶ HOLD' : 'HOLD', 65);
     add('taxi_continue', !ui.selectedManualHold ? '▶ GO' : 'GO', 60);

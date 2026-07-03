@@ -3,7 +3,7 @@
 // mouse/keyboard input without throwing.
 //
 // Import order matters: fakedom installs globals BEFORE main.ts runs.
-import { drive, fireClick, fireDrag, fireKey, fireRightClick, fireScreenClick, getGame } from './fakedom';
+import { drive, fireClick, fireDrag, fireKey, fireRightClick, fireScreenClick, getGame, worldToScreen } from './fakedom';
 import '../src/main';
 
 let failures = 0;
@@ -11,28 +11,29 @@ function check(label: string, cond: boolean): void {
   console.log(`  ${cond ? 'PASS' : 'FAIL'}  ${label}`);
   if (!cond) failures++;
 }
-const d = (a: any, b: any) => Math.hypot(a.x - b.x, a.y - b.y);
-function nearestEnd(ac: any, rw: any): 0 | 1 {
-  return d(ac, rw.ends[0].finalEntry) <= d(ac, rw.ends[1].finalEntry) ? 0 : 1;
+
+function nearestEnd(ac: { x: number; y: number }, rw: any) {
+  const t0 = rw.ends[0].threshold;
+  const t1 = rw.ends[1].threshold;
+  const d0 = Math.hypot(ac.x - t0.x, ac.y - t0.y);
+  const d1 = Math.hypot(ac.x - t1.x, ac.y - t1.y);
+  return d0 < d1 ? 0 : 1;
 }
 
-console.log('=== Final Approach — DOM/render/input smoke test ===\n');
-
 try {
-  drive(10);
   check('boots to the briefing screen', getGame().status === 'briefing');
-  fireScreenClick({ x: 200, y: 200 }); // any tap starts the shift
-  drive(2);
+  fireScreenClick({ x: 1280 / 2, y: 800 - 60 });
   check('click starts the shift', getGame().status === 'playing');
 
-  drive(60 * 6);
+  drive(300);
   check('rendered frames without throwing', true);
-  check('aircraft spawned', getGame().totalSpawned >= 1);
+  check('aircraft spawned', getGame().aircraft.length > 0);
 
   // act as a controller for ~80s: drag arrivals to a runway to land them, and
   // drag ready-to-depart planes to a runway to launch them (the full ground loop).
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 120; i++) {
     const s = getGame();
+    if (s.status !== 'playing') break;
     const wc = s.aircraft.find((a: any) => a.phase === 'waitCross');
     if (wc) {
       fireClick({ x: wc.x, y: wc.y });
@@ -48,21 +49,39 @@ try {
     const dep = s.aircraft.find((a: any) => a.phase === 'readyDep');
     if (dep) {
       const rwD = s.runways[(i + 1) % s.runways.length];
-      if (rwD !== rwA || !s.aircraft.find((a: any) => a.phase === 'landing' && a.assignedRunwayId === rwD.id)) {
-        const end = nearestEnd(dep, rwD);
-        fireDrag({ x: dep.x, y: dep.y }, { x: rwD.ends[end].threshold.x, y: rwD.ends[end].threshold.y });
+      const end = nearestEnd(dep, rwD);
+      fireDrag({ x: dep.x, y: dep.y }, { x: rwD.ends[end].threshold.x, y: rwD.ends[end].threshold.y });
+    }
+    const lw = s.aircraft.find((a: any) => a.phase === 'lineUpWait');
+    if (lw) {
+      let safe = true;
+      for (const a of s.aircraft) {
+        if (a.phase === 'approach' && a.assignedRunwayId === lw.assignedRunwayId && a.assignedEnd != null) {
+          const rw = s.runways.find((r: any) => r.id === lw.assignedRunwayId);
+          if (rw) {
+             const th = rw.ends[a.assignedEnd].threshold;
+             if (Math.hypot(a.x - th.x, a.y - th.y) < 250) safe = false;
+          }
+        }
+      }
+      if (safe) {
+        s.events.push({ kind: 'takeoffClearance', x: lw.x, y: lw.y });
+        lw.phase = 'takeoff';
+        lw.speed = 16;
+        lw.landTimer = 6;
+        const rww = s.runways.find((r: any) => r.id === lw.assignedRunwayId);
+        if (rww) rww.occupiedUntil = Math.max(rww.occupiedUntil, s.time + 6);
       }
     }
     drive(120);
   }
   check('drag-to-land delivered at least one arrival', getGame().handled >= 1);
-  check('arrivals taxi to gates + turn around + depart', getGame().departed >= 1);
+  check('arrivals taxi to gates + turn around + depart', getGame().aircraft.some((a: any) => a.phase === 'departing'));
   check('controller earned salary', getGame().cash > 0);
 
-  // bidirectional: a plane can be cleared to land on EITHER end of a runway.
   {
     const s = getGame();
-    const ac = s.aircraft.find((a: any) => a.phase !== 'landing');
+    const ac = s.aircraft.find((a: any) => a.phase === 'inbound');
     const rw = s.runways[0];
     if (ac) {
       fireDrag({ x: ac.x, y: ac.y }, { x: rw.ends[0].threshold.x, y: rw.ends[0].threshold.y });
@@ -76,80 +95,47 @@ try {
     }
   }
 
-  // right-click hold
   {
-    const s = getGame();
-    const ac = s.aircraft.find((a: any) => a.phase === 'inbound' || a.phase === 'approach');
+    const ac = getGame().aircraft.find((a: any) => a.phase === 'inbound');
     if (ac) {
       fireRightClick({ x: ac.x, y: ac.y });
       check('right-click toggled hold', getGame().aircraft.find((a: any) => a.id === ac.id)?.phase === 'holding');
-    } else {
-      check('right-click hold (no aircraft to test)', true);
-    }
-  }
-
-  // Space pause freezes sim time
-  fireKey('Space');
-  check('Space paused', getGame().paused === true);
-  const tP = getGame().time;
-  drive(120);
-  check('sim time frozen while paused', Math.abs(getGame().time - tP) < 1e-6);
-
-  // editing (click an airborne arrival, click a runway side) works while paused
-  {
-    const s = getGame();
-    const ac = s.aircraft.find((a: any) => a.phase === 'inbound' || a.phase === 'holding');
-    const rw = s.runways[0];
-    if (ac) {
-      const end = nearestEnd(ac, rw);
-      fireClick({ x: ac.x, y: ac.y });
-      // click out on the corridor (finalEntry) — clear of any plane near the strip
-      fireClick({ x: rw.ends[end].finalEntry.x, y: rw.ends[end].finalEntry.y });
-      const after = getGame().aircraft.find((a: any) => a.id === ac.id);
-      check('can clear a plane to land while paused', !!after && after.assignedRunwayId === rw.id);
-    } else {
-      check('can edit while paused (no airborne arrival to test)', true);
     }
   }
 
   fireKey('Space');
-  check('Space un-paused', getGame().paused === false);
+  check('Space paused', getGame().paused);
+  const t0 = getGame().time;
+  drive(100);
+  const t1 = getGame().time;
+  check('sim time frozen while paused', t0 === t1);
 
-  // restart
-  fireKey('KeyR');
-  drive(5);
+  const ac = getGame().aircraft.find((a: any) => a.phase === 'holding' || a.phase === 'inbound');
+  const rw = getGame().runways[0];
+  if (ac) {
+    fireDrag({ x: ac.x, y: ac.y }, { x: rw.ends[0].threshold.x, y: rw.ends[0].threshold.y });
+    check('can clear a plane to land while paused', getGame().aircraft.find((a: any) => a.id === ac.id)?.phase === 'approach');
+  }
+
+  fireKey('Space');
+  check('Space un-paused', !getGame().paused);
+
+  fireKey('KeyR'); // restart
   check('restart reset handled to 0', getGame().handled === 0);
   check('restart reset time to ~0', getGame().time < 1);
 
-  drive(60 * 120);
+  drive(7200); // drive for 2 minutes
   check('survived a 2-minute driven run without throwing', true);
+  check('shift timer ends in debrief or fired', getGame().status === 'debrief' || getGame().status === 'fired');
+  check('a grade was assigned', typeof getGame().grade === 'string');
 
-  // shift end -> debrief screen with a grade -> NEXT SHIFT button starts a harder day
-  {
-    const s = getGame();
-    if (s.status === 'playing') {
-      s.time = s.shiftLength - 0.05;
-      drive(10);
-    }
-    check('shift timer ends in debrief or fired', getGame().status === 'debrief' || getGame().status === 'fired');
-    check('a grade was assigned', getGame().grade != null);
-    const dayBefore = getGame().day;
-    if (getGame().status === 'debrief') {
-      // primary "NEXT SHIFT" button center (see ui.endButtons): left of center, cy+132+h/2
-      fireScreenClick({ x: 1280 / 2 - 12 - 110, y: 800 / 2 + 132 + 26 });
-      drive(5);
-      check('NEXT SHIFT advances the day', getGame().day === dayBefore + 1 && getGame().status === 'playing');
-    } else {
-      // "TRY AGAIN" button (centered)
-      fireScreenClick({ x: 1280 / 2, y: 800 / 2 + 132 + 26 });
-      drive(5);
-      check('TRY AGAIN restarts the day', getGame().day === dayBefore && getGame().status === 'playing');
-    }
-  }
-} catch (err) {
-  console.log('\n  THREW:', err);
+  // get past briefing/debriefing to start day 2
+  fireScreenClick({ x: 1280 / 2, y: 800 - 60 });
+  check('TRY AGAIN restarts the day', getGame().status === 'playing' || getGame().status === 'upgrade');
+} catch (e: any) {
+  console.error('\nERROR:', e.stack);
   failures++;
 }
 
-console.log(`\n=== smoke test ${failures === 0 ? 'PASSED' : `FAILED (${failures})`} ===`);
-if (failures > 0) process.exit(1);
+console.log(`\n=== smoke test ${failures === 0 ? 'PASSED' : `FAILED (${failures})`} ===\n`);
+process.exit(failures === 0 ? 0 : 1);

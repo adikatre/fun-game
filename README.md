@@ -61,6 +61,8 @@ auto-clears traffic; `?ff=<seconds>` fast-forwards the sim at load.
   new runways (creating complex intersections), new gate terminals, and advanced radar tech!
 - **Streak economy**: consecutive safe landings/departures multiply pay (up to
   ×2); any near-miss, diversion, or crash resets it.
+- **Line Up & Wait**: Departures now taxi to the runway threshold and hold short. They must be explicitly cleared for takeoff by tapping them, which brings up the Takeoff button. This allows you to position aircraft on the runway for immediate departure when a gap in arrivals occurs.
+- **Radar Vectors**: Arrivals can be given radar vectors to alter their heading in 15-degree increments. Select an arrival and use the 'VEC L' (Left) and 'VEC R' (Right) buttons to sequence them and resolve conflicts.
 - **Advanced Air & Ground Control**: Click planes to open a floating context menu.
   Command airborne planes to **Slow** or **Expedite** to fine-tune spacing, or
   order an **Abort** for an immediate go-around. Command taxiing planes to **Hold Short**

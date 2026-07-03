@@ -274,6 +274,7 @@ function makeAircraft(state: GameState, fuelMult: number): Aircraft {
     py: y,
     ppx: x,
     ppy: y,
+    vectorTarget: null,
   };
 }
 
@@ -378,7 +379,30 @@ export function authorizeCrossing(state: GameState, aircraftId: number): boolean
   state.events.push({ kind: 'crossRunway', x: ac.x, y: ac.y });
   return true;
 }
+export function commandTakeoff(state: GameState, aircraftId: number): boolean {
+  const ac = findAircraft(state, aircraftId);
+  if (!ac || ac.phase !== 'lineUpWait' || ac.assignedRunwayId == null) return false;
+  const rw = findRunway(state, ac.assignedRunwayId);
+  if (!rw) return false;
+  ac.phase = 'takeoff';
+  ac.speed = 16;
+  ac.landTimer = CONFIG.takeoffRollSeconds;
+  rw.occupiedUntil = Math.max(rw.occupiedUntil, state.time + CONFIG.takeoffRollSeconds);
+  state.events.push({ kind: 'takeoffClearance', x: ac.x, y: ac.y });
+  return true;
+}
 
+export function commandVector(state: GameState, aircraftId: number, headingOffset: number | null): boolean {
+  const ac = findAircraft(state, aircraftId);
+  if (!ac || !isAirborneArrival(ac)) return false;
+  if (headingOffset === null) {
+    ac.vectorTarget = null;
+  } else {
+    ac.vectorTarget = ac.heading + headingOffset;
+    state.events.push({ kind: 'vector', heading: ac.vectorTarget, x: ac.x, y: ac.y });
+  }
+  return true;
+}
 export function setSpeed(state: GameState, aircraftId: number, target: 'slow' | 'normal' | 'expedite'): boolean {
   const ac = findAircraft(state, aircraftId);
   if (!ac || !isAirborneArrival(ac)) return false;
@@ -420,7 +444,8 @@ function goAround(state: GameState, ac: Aircraft): void {
 function attemptLanding(state: GameState, ac: Aircraft, rw: Runway, end: 0 | 1): void {
   const re = rw.ends[end];
   const aligned = Math.abs(angleDiff(ac.heading, re.dir)) <= deg(CONFIG.alignToleranceDeg);
-  const free = state.time >= rw.occupiedUntil;
+  const someoneLinedUp = state.aircraft.some((a) => a.phase === 'lineUpWait' && a.assignedRunwayId === rw.id);
+  const free = state.time >= rw.occupiedUntil && !someoneLinedUp;
   if (free && (aligned || ac.emergency !== 'none')) {
     ac.phase = 'landing';
     ac.heading = re.dir;
@@ -473,18 +498,7 @@ function nearestFreeGate(state: GameState, ac: Aircraft): Gate | null {
   return best;
 }
 /** A shared runway is clear for a departure only if no arrival is landing/short-final. */
-function runwayClearForDeparture(state: GameState, rw: Runway): boolean {
-  if (state.time < rw.occupiedUntil) return false;
-  for (const a of state.aircraft) {
-    if (a.assignedRunwayId !== rw.id) continue;
-    if (a.phase === 'landing') return false;
-    if (a.phase === 'approach' && a.assignedEnd != null) {
-      const th = rw.ends[a.assignedEnd].threshold;
-      if (dist(a.x, a.y, th.x, th.y) < CONFIG.shortFinalGuard) return false;
-    }
-  }
-  return true;
-}
+
 function groundBlockedAhead(state: GameState, ac: Aircraft): boolean {
   for (const o of state.aircraft) {
     if (o.id === ac.id || AIRBORNE_PHASES.includes(o.phase)) continue;
@@ -830,10 +844,13 @@ function stepAircraft(state: GameState, ac: Aircraft, dt: number, turnaroundMult
     } else ac.speed = 0;
   } else if (ac.phase === 'waitCross') {
     ac.speed = 0; // waiting for player authorization
-  } else if (ac.phase === 'atGate' || ac.phase === 'readyDep' || ac.phase === 'holdShort') {
+  } else if (ac.phase === 'atGate' || ac.phase === 'readyDep' || ac.phase === 'holdShort' || ac.phase === 'lineUpWait') {
     ac.speed = 0;
   } else {
     // inbound flies straight, seeking speed target
+    if (ac.vectorTarget != null) {
+      ac.heading = turnToward(ac.heading, ac.vectorTarget, ac.turnRate * dt);
+    }
     const ts = ac.speedTarget === 'slow' ? ac.cruiseSpeed * 0.65 : ac.speedTarget === 'expedite' ? ac.cruiseSpeed * 1.35 : ac.cruiseSpeed;
     ac.speed = lerp(ac.speed, ts, 1.5 * dt);
   }
@@ -895,13 +912,15 @@ function stepAircraft(state: GameState, ac: Aircraft, dt: number, turnaroundMult
   }
   if (ac.phase === 'holdShort' && ac.assignedRunwayId != null && ac.assignedEnd != null) {
     const rw = findRunway(state, ac.assignedRunwayId);
-    if (rw && runwayClearForDeparture(state, rw)) {
-      const re = rw.ends[ac.assignedEnd];
-      ac.phase = 'takeoff';
-      ac.heading = re.dir;
-      ac.speed = 16;
-      ac.landTimer = CONFIG.takeoffRollSeconds;
-      rw.occupiedUntil = state.time + CONFIG.takeoffRollSeconds;
+    const someoneLinedUp = state.aircraft.some((a) => a.phase === 'lineUpWait' && a.assignedRunwayId === ac.assignedRunwayId);
+    if (rw && state.time >= rw.occupiedUntil && !someoneLinedUp) {
+      const startEnd = rw.ends[(1 - ac.assignedEnd) as 0 | 1];
+      const targetEnd = rw.ends[ac.assignedEnd];
+      ac.phase = 'lineUpWait';
+      ac.x = startEnd.threshold.x;
+      ac.y = startEnd.threshold.y;
+      ac.heading = targetEnd.dir;
+      state.events.push({ kind: 'lineUp', x: ac.x, y: ac.y });
     }
     return 'none';
   }

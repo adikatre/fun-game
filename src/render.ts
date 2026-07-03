@@ -46,6 +46,7 @@ function uiContext(state: GameState, hints: RenderHints, vp: Viewport, alpha: nu
     selectedHolding: !!sel && sel.phase === 'holding',
     selectedWaitCross: !!sel && sel.phase === 'waitCross',
     selectedTaxi: selTaxi,
+    selectedTakeoff: false,
     selectedSpeedTarget: sel?.speedTarget,
     selectedManualHold: sel?.manualHold,
     selectedScreenPos,
@@ -415,6 +416,17 @@ function drawGates(ctx: CanvasRenderingContext2D, state: GameState): void {
 
 function drawTrailAndVector(ctx: CanvasRenderingContext2D, ac: Aircraft, alpha: number): void {
   if (!AIRBORNE_PHASES.includes(ac.phase)) return;
+  if (ac.vectorTarget != null) {
+    ctx.beginPath();
+    ctx.moveTo(ac.x, ac.y);
+    ctx.lineTo(ac.x + Math.cos(ac.vectorTarget) * 200, ac.y + Math.sin(ac.vectorTarget) * 200);
+    ctx.strokeStyle = '#c084fc';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([5, 5]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
   // trail dots
   for (let i = 0; i < ac.trail.length; i++) {
     const a = (i / ac.trail.length) * 0.45;

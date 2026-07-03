@@ -30,6 +30,7 @@ export type Phase =
   | 'readyDep'
   | 'taxiOut'
   | 'holdShort'
+  | 'lineUpWait'
   | 'takeoff'
   | 'departing'
   | 'waitCross';
@@ -82,6 +83,7 @@ export interface Aircraft {
   py: number;
   ppx: number;
   ppy: number;
+  vectorTarget: number | null;
 }
 
 /** One landable end of a runway (a runway has two — reciprocal directions). */
@@ -145,6 +147,9 @@ export type GameEvent =
   | { kind: 'divert'; amount: number; x: number; y: number }
   | { kind: 'crash'; x: number; y: number }
   | { kind: 'groundCrash'; x: number; y: number }
+  | { kind: 'takeoffClearance'; x: number; y: number }
+  | { kind: 'lineUp'; x: number; y: number }
+  | { kind: 'vector'; heading: number; x: number; y: number }
   | { kind: 'emergency'; emergency: Emergency; callsign: string }
   | { kind: 'crossRunway'; x: number; y: number }
   | { kind: 'setSpeed'; target: 'slow' | 'normal' | 'expedite'; x: number; y: number }

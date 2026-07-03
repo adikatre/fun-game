@@ -4,7 +4,7 @@
 // side (or tap a plane, then tap the side) to clear it to land from that end;
 // right-click or double-tap = hold; Space = pause; M = mute; R = restart.
 
-import { commandToRunway, toggleHold, setSpeed, commandGoAround, toggleManualHold } from './sim';
+import { commandToRunway, toggleHold, setSpeed, commandGoAround, toggleManualHold, commandTakeoff, commandVector } from './sim';
 import type { Aircraft, GameState, RenderHints, Vec, Viewport } from './types';
 import { buttonAt, endButtons, hudButtons, upgradeButtons, floatingButtons, type UiButton, type UiContext } from './ui';
 import { UPGRADE_DEFS, type UpgradeState } from './upgrades';
@@ -92,7 +92,9 @@ export function createInput(ctx: InputContext): InputController {
       selectedHolding: !!sel && sel.phase === 'holding',
       selectedWaitCross: !!sel && sel.phase === 'waitCross',
       selectedTaxi: selTaxi,
+      selectedTakeoff: !!sel && sel.phase === 'lineUpWait',
       selectedSpeedTarget: sel?.speedTarget,
+      selectedVectorTarget: sel?.vectorTarget,
       selectedManualHold: sel?.manualHold,
       selectedScreenPos,
     };
@@ -175,6 +177,19 @@ export function createInput(ctx: InputContext): InputController {
         break;
       case 'speed_expedite':
         if (selectedId != null) setSpeed(state, selectedId, 'expedite');
+        break;
+      case 'vector_left':
+        if (selectedId != null) commandVector(state, selectedId, -(15 * Math.PI) / 180);
+        break;
+      case 'vector_right':
+        if (selectedId != null) commandVector(state, selectedId, (15 * Math.PI) / 180);
+        break;
+      case 'vector_cancel':
+        if (selectedId != null) commandVector(state, selectedId, null);
+        break;
+      case 'takeoff':
+        if (selectedId != null) commandTakeoff(state, selectedId);
+        selectedId = null;
         break;
       case 'go_around':
         if (selectedId != null) commandGoAround(state, selectedId);
