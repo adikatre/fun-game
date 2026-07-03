@@ -1,23 +1,36 @@
 // Final Approach — all tunable constants in one place for playtesting.
-// Sim units are world pixels (1280x800 logical space, letterboxed to the window).
+// Sim units are world pixels (1600x1000 logical space, letterboxed to the window).
 // "Speeds" are world px/sec; they read like knots on the scope but aren't literal.
 
 export const CONFIG = {
   // --- world / layout ---
-  worldW: 1280,
-  worldH: 800,
+  worldW: 1600,
+  worldH: 1000,
   // airport reference (range-ring center)
-  airportX: 600,
-  airportY: 410,
+  airportX: 750,
+  airportY: 500,
 
-  // --- runways (two parallel strips; each can be landed from EITHER end, so
-  //     there are four approach corridors total; the player picks the side by
+  // --- runways (three parallel strips to start; each can be landed from EITHER end, so
+  //     there are six approach corridors total; the player picks the side by
   //     dragging the plane to it). `headingDeg` is the primary end's landing
   //     travel direction; the reciprocal end is the opposite. ---
-  approachLength: 300, // length of each final-approach corridor (px)
+  approachLength: 450, // length of each final-approach corridor (px)
   runways: [
-    { cx: 560, cy: 330, headingDeg: 180, length: 150, side: 'L' as const },
-    { cx: 560, cy: 500, headingDeg: 180, length: 150, side: 'R' as const },
+    { cx: 680, cy: 360, headingDeg: 180, length: 240, side: 'L' as const },
+    { cx: 680, cy: 520, headingDeg: 180, length: 240, side: 'R' as const },
+    { cx: 680, cy: 680, headingDeg: 180, length: 240, side: 'C' as const },
+  ],
+
+  // --- runway expansion slots (purchasable via tech tree) ---
+  // Each slot defines a new runway that can be added. They get progressively more
+  // angled/crossing, creating intersection complexity.
+  runwayExpansionSlots: [
+    // Slot 4: slightly angled, crosses runway 2
+    { cx: 730, cy: 440, headingDeg: 135, length: 240, side: 'X' as const },
+    // Slot 5: steeper angle, crosses runways 1 and 3
+    { cx: 770, cy: 580, headingDeg: 225, length: 240, side: 'Y' as const },
+    // Slot 6: perpendicular crosswind runway
+    { cx: 690, cy: 520, headingDeg: 90, length: 220, side: 'Z' as const },
   ],
 
   // --- session: a shift is a timed round with an escalating arc + final rush ---
@@ -42,9 +55,9 @@ export const CONFIG = {
 
   // --- aircraft types: cruise px/s, approach factor, turn rate deg/s, wake factor, salary ---
   types: {
-    small: { speed: 82, turnRateDeg: 52, wake: 1.0, salary: 90, label: 'small' },
-    medium: { speed: 70, turnRateDeg: 40, wake: 1.18, salary: 120, label: 'med' },
-    heavy: { speed: 60, turnRateDeg: 27, wake: 1.5, salary: 180, label: 'heavy' },
+    small: { speed: 41, turnRateDeg: 35, wake: 1.0, salary: 90, label: 'small' },
+    medium: { speed: 35, turnRateDeg: 28, wake: 1.18, salary: 120, label: 'med' },
+    heavy: { speed: 30, turnRateDeg: 20, wake: 1.5, salary: 180, label: 'heavy' },
   },
   approachSpeedFactor: 0.72, // planes slow down on final
   arriveRadius: 18, // waypoint capture distance
@@ -66,9 +79,9 @@ export const CONFIG = {
   rampDurationSeconds: 165,
   rushWaveEvery: 45, // after the ramp, periodic bursts ("holiday rush")
   rushWaveSize: 3,
-  maxAirborneStart: 4, // concurrency cap (grows over time)
-  maxAirborneGrowEvery: 40,
-  maxAirborneCap: 13,
+  maxAirborneStart: 5, // concurrency cap (grows over time) — increased for 3 runways
+  maxAirborneGrowEvery: 35,
+  maxAirborneCap: 16, // raised for larger airport
   heavyChanceStart: 0.05, // share of heavies grows with the rush
   heavyChanceEnd: 0.3,
   emergencyStartAt: 95, // no emergencies during onboarding
@@ -78,7 +91,7 @@ export const CONFIG = {
   // into the exact center and self-collide.
   spawnAngleSpreadStartDeg: 55,
   spawnAngleSpreadEndDeg: 180,
-  spawnAimSpread: 80,
+  spawnAimSpread: 100,
 
   // --- economy ---
   onTimeBonusMax: 50, // bonus for quick handling, decays with time-in-airspace
@@ -90,23 +103,44 @@ export const CONFIG = {
   streakStep: 0.1, // each consecutive safe landing/departure adds +10% pay...
   streakMaxMult: 2.0, // ...up to double pay
 
-  // --- ground ops (terminal sits between the two runways) ---
+  // --- ground ops (terminal sits south of the middle runway) ---
   gates: [
-    { x: 505, y: 415 },
-    { x: 555, y: 415 },
-    { x: 605, y: 415 },
-    { x: 655, y: 415 },
+    { x: 580, y: 440 },
+    { x: 630, y: 440 },
+    { x: 680, y: 440 },
+    { x: 730, y: 440 },
+    { x: 780, y: 440 },
+    { x: 830, y: 440 },
   ],
-  rampWait: { x: 770, y: 415 }, // where arrivals idle if every gate is full
+  // gate expansion slots (purchasable)
+  gateExpansionSlots: [
+    { x: 580, y: 600 },
+    { x: 630, y: 600 },
+    { x: 680, y: 600 },
+    { x: 730, y: 600 },
+    { x: 780, y: 600 },
+    { x: 830, y: 600 },
+  ],
+  rampWait: { x: 900, y: 440 }, // where arrivals idle if every gate is full
   taxiSpeed: 26, // ground speed (px/s) — deliberately slow
   groundSeparation: 22, // taxiing planes stop to avoid overlapping the one ahead
   turnaroundSeconds: 13, // gate time (deplane / refuel / board) before it can depart
   takeoffRollSeconds: 2.6, // runway occupancy during a takeoff roll
   departureSalary: 120, // paid when a departure successfully climbs out
-  shortFinalGuard: 150, // a departure holds short if an arrival is this close to the shared runway
+  shortFinalGuard: 170, // a departure holds short if an arrival is this close to the shared runway
+
+  // --- taxiway crossing ---
+  crossingHoldShortDist: 30, // distance from runway center to stop at when waiting to cross
+  crossingClearDist: 50, // how far past the runway center counts as "cleared"
+
+  // --- weather (upgrade-gated) ---
+  weatherCellRadius: 80, // radius of weather cells
+  weatherCellSpeed: 12, // px/s drift speed
+  weatherSpawnInterval: 60, // seconds between new weather cell spawns
+  weatherMaxCells: 3,
 
   // --- input ---
-  planeHitRadius: 22,
+  planeHitRadius: 24,
   pathSampleDist: 20, // min world-px between sampled drag points
   holdRadius: 120, // orbit radius for holds (must exceed v/turnRate for all types)
 
@@ -115,33 +149,70 @@ export const CONFIG = {
   simStepHz: 60,
 } as const;
 
-// Radar/phosphor palette — instantly reads as ATC, and is its own identity
-// (not Mini-Metro-white, not the transit prototype's warm paper).
+// ---------- Pastel / soft palette — Mini Airways inspired ----------
+// Light background, clean colors, high contrast text.
+// Reads as modern, inviting, and premium without the dark "controller room" feel.
 export const PALETTE = {
-  bg: '#0a0f0c',
-  bgVignette: '#050806',
-  ring: 'rgba(95,224,138,0.10)',
-  ringText: 'rgba(95,224,138,0.35)',
-  sweep: 'rgba(95,224,138,0.07)',
-  runway: '#20302a',
-  runwayEdge: 'rgba(180,230,200,0.5)',
-  corridorFree: 'rgba(95,224,138,0.32)',
-  corridorBusy: 'rgba(232,181,74,0.45)',
-  blip: '#67e8a0', // normal arrival
-  blipDim: 'rgba(103,232,160,0.5)',
-  trail: 'rgba(103,232,160,0.22)',
-  departure: '#5bd6e8', // departures / ground-bound traffic
-  gateFree: 'rgba(103,232,160,0.22)',
-  gateBusy: '#e8b54a',
-  gateReady: '#5bd6e8',
-  selected: '#e9f7ee',
-  warn: '#e8b54a', // low fuel / caution / predicted conflict
-  danger: '#ff5a48', // conflict / emergency / crash
-  cash: '#8ff0b4', // score popups
-  text: '#dff3e6',
-  textDim: 'rgba(223,243,230,0.55)',
-  panel: 'rgba(10,18,14,0.82)',
-  panelEdge: 'rgba(103,232,160,0.25)',
+  // base
+  bg: '#E8F0FE',
+  bgAlt: '#DCE6F6',
+  bgVignette: 'rgba(200,215,240,0.4)',
+
+  // terrain hints
+  terrain: '#D4E2D4',      // parks/green areas
+  water: '#C5DAF0',        // water features
+  cityBlock: '#D8D8D8',    // urban blocks
+
+  // range rings / scope overlay
+  ring: 'rgba(100,120,160,0.12)',
+  ringText: 'rgba(80,100,140,0.45)',
+  sweep: 'rgba(100,130,200,0.06)',
+
+  // runway
+  runway: '#B8C4D0',
+  runwayEdge: 'rgba(80,100,130,0.6)',
+  runwayCenter: 'rgba(255,255,255,0.7)',
+  corridorFree: 'rgba(70,130,220,0.25)',
+  corridorBusy: 'rgba(230,160,60,0.35)',
+
+  // taxiways
+  taxiway: 'rgba(200,180,100,0.5)',
+  taxiwayLine: '#C8B860',
+  holdShort: '#E8854A',
+
+  // aircraft
+  blip: '#4A90D9',           // inbound arrivals
+  blipDim: 'rgba(74,144,217,0.45)',
+  trail: 'rgba(74,144,217,0.2)',
+  departure: '#E8854A',     // departures / ground-bound
+  departureDim: 'rgba(232,133,74,0.45)',
+  gateParked: '#5AC06B',     // at gate / turnaround
+  gateFree: 'rgba(90,192,107,0.2)',
+  gateBusy: '#E8B54A',
+  gateReady: '#5AC06B',      // ready to depart
+
+  // interaction
+  selected: '#2D3748',
+  hover: 'rgba(45,55,72,0.15)',
+
+  // warnings
+  warn: '#E8A030',           // amber / caution
+  danger: '#E85454',         // red / conflict / crash
+  cash: '#3DA06B',           // money popups (green on light bg)
+
+  // text
+  text: '#2D3748',
+  textDim: 'rgba(45,55,72,0.5)',
+  textLight: '#FFFFFF',
+
+  // panels / UI
+  panel: 'rgba(255,255,255,0.88)',
+  panelEdge: 'rgba(100,120,160,0.2)',
+  panelShadow: 'rgba(0,0,0,0.08)',
+
+  // weather
+  weatherCell: 'rgba(120,140,180,0.3)',
+  weatherRain: 'rgba(100,120,160,0.5)',
 } as const;
 
 /** Per-day difficulty knobs derived from CONFIG (career progression). */

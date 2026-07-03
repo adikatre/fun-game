@@ -6,7 +6,8 @@
 
 import { commandToRunway, toggleHold } from './sim';
 import type { Aircraft, GameState, RenderHints, Vec, Viewport } from './types';
-import { buttonAt, endButtons, hudButtons, type UiButton, type UiContext } from './ui';
+import { buttonAt, endButtons, hudButtons, upgradeButtons, type UiButton, type UiContext } from './ui';
+import { UPGRADE_DEFS, type UpgradeState } from './upgrades';
 
 export interface UiActions {
   startShift(): void; // leave the briefing screen
@@ -19,6 +20,10 @@ export interface UiActions {
   unlockAudio(): void; // call on every user gesture
   getMuted(): boolean;
   getBest(): number;
+  showUpgrades(): void;
+  purchaseUpgrade(id: string): void;
+  authorizeCross(id: number): void;
+  getUpgrades(): UpgradeState;
 }
 
 export interface InputContext {
@@ -77,12 +82,44 @@ export function createInput(ctx: InputContext): InputController {
       status: state.status,
       selectedAirborne: selAirborne,
       selectedHolding: !!sel && sel.phase === 'holding',
+      selectedWaitCross: !!sel && sel.phase === 'waitCross',
     };
   }
   function allButtons(): UiButton[] {
     const state = getState();
     const vp = getViewport();
+    if (state.status === 'upgrade') return upgradeButtons(vp);
     return [...hudButtons(vp, uiCtx()), ...endButtons(vp, state.status)];
+  }
+
+  function upgradeAt(sx: number, sy: number): string | null {
+    const vp = getViewport();
+    const cardW = 200;
+    const cardH = 110;
+    const gap = 16;
+    const cols = Math.min(4, Math.floor((vp.cssW - 40) / (cardW + gap)));
+    const totalW = cols * cardW + (cols - 1) * gap;
+    const startX = vp.cssW / 2 - totalW / 2;
+    let gridY = 120;
+    
+    const categories = ['runway', 'gates', 'weather', 'radar', 'fuel', 'turnaround'];
+    let col = 0;
+    for (const cat of categories) {
+      const catDefs = UPGRADE_DEFS.filter((d) => d.category === cat);
+      for (const def of catDefs) {
+        const cardX = startX + col * (cardW + gap);
+        const cardY = gridY;
+        if (sx >= cardX && sx <= cardX + cardW && sy >= cardY && sy <= cardY + cardH) {
+          return def.id;
+        }
+        col++;
+        if (col >= cols) {
+          col = 0;
+          gridY += cardH + gap;
+        }
+      }
+    }
+    return null;
   }
 
   function pressButton(b: UiButton): void {
@@ -98,7 +135,18 @@ export function createInput(ctx: InputContext): InputController {
       case 'hold':
         if (selectedId != null) toggleHold(state, selectedId);
         break;
+      case 'cross':
+        if (selectedId != null) actions.authorizeCross(selectedId);
+        break;
       case 'primary':
+        if (state.status === 'debrief') {
+          actions.showUpgrades();
+        } else {
+          actions.nextShift();
+        }
+        selectedId = null;
+        break;
+      case 'shop_done':
         actions.nextShift();
         selectedId = null;
         break;
@@ -168,6 +216,17 @@ export function createInput(ctx: InputContext): InputController {
       actions.startShift();
       return;
     }
+    
+    if (state.status === 'upgrade') {
+      const b = buttonAt(allButtons(), pointerScreen.x, pointerScreen.y);
+      if (b) pressButton(b);
+      else {
+        const upId = upgradeAt(pointerScreen.x, pointerScreen.y);
+        if (upId) actions.purchaseUpgrade(upId);
+      }
+      return;
+    }
+
     if (state.status === 'debrief' || state.status === 'fired') {
       const b = buttonAt(allButtons(), pointerScreen.x, pointerScreen.y);
       if (b) pressButton(b);
@@ -278,11 +337,16 @@ export function createInput(ctx: InputContext): InputController {
     let hoverRunwayId: number | null = null;
     let hoverEnd: 0 | 1 | null = null;
     let hoverButtonId: string | null = null;
+    let hoverUpgradeId: string | null = null;
     let drag: RenderHints['drag'] = null;
 
     if (pointerScreen) {
       const hb = buttonAt(allButtons(), pointerScreen.x, pointerScreen.y);
       hoverButtonId = hb ? hb.id : null;
+      if (state.status === 'upgrade') {
+        const hu = upgradeAt(pointerScreen.x, pointerScreen.y);
+        if (hu) hoverUpgradeId = hu;
+      }
     }
 
     if (pointerWorld && state.status === 'playing' && hoverButtonId == null) {
@@ -314,8 +378,10 @@ export function createInput(ctx: InputContext): InputController {
       selectedAircraftId: validSelected(),
       drag,
       hoverButtonId,
+      hoverUpgradeId,
       muted: actions.getMuted(),
       best: actions.getBest(),
+      upgrades: actions.getUpgrades(),
     };
   }
 

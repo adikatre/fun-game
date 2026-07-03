@@ -9,8 +9,9 @@ import { Fx } from './fx';
 import { createInput } from './input';
 import { render } from './render';
 import { sdk } from './sdk';
-import { commandToRunway, createGame, startShift, update } from './sim';
+import { commandToRunway, createGame, startShift, update, authorizeCrossing } from './sim';
 import type { GameState, Viewport } from './types';
+import { loadUpgradeState, saveUpgradeState, purchaseUpgrade as doPurchase } from './upgrades';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d', { alpha: false })!;
@@ -46,7 +47,8 @@ const urlSeed = seedParam != null && seedParam !== '' ? Number(seedParam) >>> 0 
 const freshSeed = () => (urlSeed != null ? urlSeed : (Math.random() * 0xffffffff) >>> 0);
 
 let seed = urlSeed ?? CONFIG.defaultSeed;
-let state: GameState = createGame(seed, day, true);
+let upgradeState = loadUpgradeState();
+let state: GameState = createGame(seed, day, true, upgradeState);
 let shiftRecorded = false;
 
 const viewport: Viewport = { scale: 1, offsetX: 0, offsetY: 0, cssW: 1, cssH: 1 };
@@ -73,7 +75,7 @@ function newShift(nextDay: number, briefing: boolean): void {
   day = nextDay;
   save('fa.day', day);
   seed = freshSeed();
-  state = createGame(seed, day, briefing);
+  state = createGame(seed, day, briefing, upgradeState);
   shiftRecorded = false;
   fx.reset(state);
   if (!briefing) sdk.gameplayStart();
@@ -87,6 +89,10 @@ function recordShift(): void {
     best = state.cash;
     save('fa.best', best);
   }
+  upgradeState.totalCashEarned += state.cash;
+  upgradeState.bankBalance += state.cash;
+  saveUpgradeState(upgradeState);
+  
   sdk.gameplayStop();
   if (state.status === 'debrief' && (state.grade === 'S' || state.grade === 'A')) sdk.happytime();
 }
@@ -103,6 +109,19 @@ const input = createInput({
     nextShift: () => newShift(day + 1, false),
     retryShift: () => newShift(day, false),
     restartKey: () => newShift(day, false),
+    showUpgrades: () => {
+      state.status = 'upgrade';
+    },
+    purchaseUpgrade: (id: string) => {
+      if (doPurchase(upgradeState, id as any)) {
+        saveUpgradeState(upgradeState);
+        state.events.push({ kind: 'purchase', upgradeId: id });
+        audio.uiClick();
+      }
+    },
+    authorizeCross: (id: number) => {
+      authorizeCrossing(state, id);
+    },
     togglePause: () => {
       if (state.status !== 'playing') return;
       state.paused = !state.paused;
@@ -118,6 +137,7 @@ const input = createInput({
     unlockAudio: () => audio.unlock(),
     getMuted: () => audio.muted,
     getBest: () => best,
+    getUpgrades: () => upgradeState,
   },
 });
 
@@ -126,7 +146,7 @@ const input = createInput({
     return state;
   },
   restart: (s?: number) => {
-    state = createGame(s ?? seed, day);
+    state = createGame(s ?? seed, day, false, upgradeState);
     shiftRecorded = false;
     fx.reset(state);
   },
@@ -160,7 +180,7 @@ const STEP_FF = 1 / CONFIG.simStepHz;
     startShift(state);
     for (let i = 0; i < ff * CONFIG.simStepHz; i++) {
       if (autoplay && i % 30 === 0) runAutoplay();
-      update(state, STEP_FF);
+      update(state, STEP_FF, upgradeState);
     }
     state.events.length = 0;
     fx.reset(state);
@@ -191,7 +211,7 @@ function frame(now: number): void {
   let steps = 0;
   while (acc >= STEP && steps < 240) {
     if (autoplay && autoTick++ % 30 === 0) runAutoplay();
-    update(state, STEP);
+    update(state, STEP, upgradeState);
     acc -= STEP;
     steps++;
   }

@@ -1,4 +1,5 @@
 import type { Rng } from './rng';
+import type { UpgradeState } from './upgrades';
 
 export type AircraftType = 'small' | 'medium' | 'heavy';
 export type Emergency = 'none' | 'lowFuel' | 'medical';
@@ -17,6 +18,7 @@ export type Emergency = 'none' | 'lowFuel' | 'medical';
  *  holdShort — waiting at the runway for it to be clear, then lines up
  *  takeoff   — accelerating down the runway; occupies the runway
  *  departing — airborne, climbing out to leave the airspace
+ *  waitCross — waiting at a taxiway-runway intersection for player to authorize crossing
  */
 export type Phase =
   | 'inbound'
@@ -29,7 +31,8 @@ export type Phase =
   | 'taxiOut'
   | 'holdShort'
   | 'takeoff'
-  | 'departing';
+  | 'departing'
+  | 'waitCross';
 
 /** Airborne phases are subject to separation conflicts; ground phases are not. */
 export const AIRBORNE_PHASES: readonly Phase[] = ['inbound', 'holding', 'approach', 'departing'];
@@ -70,6 +73,8 @@ export interface Aircraft {
   conflictTimeLeft: number; // seconds until this conflict becomes a crash (render countdown)
   warn: boolean; // PREDICTED conflict within lookahead (render: AMBER)
   trail: Vec[]; // recent positions (radar trail)
+  // taxiway crossing state
+  crossingRunwayId: number | null; // runway this plane needs to cross (null if not at a crossing)
   // render interpolation
   px: number;
   py: number;
@@ -91,6 +96,7 @@ export interface Runway {
   cy: number;
   length: number;
   width: number;
+  angle: number; // rotation angle in radians (for rendering)
   ends: [RunwayEnd, RunwayEnd]; // [0] primary, [1] reciprocal
   occupiedUntil: number; // whole strip is busy during any landing/takeoff
 }
@@ -102,13 +108,25 @@ export interface Gate {
   occupantId: number | null;
 }
 
+/** A weather cell drifting across the map (no-fly zone). */
+export interface WeatherCell {
+  id: number;
+  x: number;
+  y: number;
+  radius: number;
+  vx: number; // drift velocity
+  vy: number;
+  ttl: number; // seconds until it dissipates
+}
+
 /**
- * briefing — start screen; sim is frozen until the player begins the shift
- * playing  — the shift is live
- * debrief  — the shift timer ran out; grade + stats screen
- * fired    — two crashes; failure screen
+ * briefing  — start screen; sim is frozen until the player begins the shift
+ * playing   — the shift is live
+ * debrief   — the shift timer ran out; grade + stats screen
+ * fired     — two crashes; failure screen
+ * upgrade   — between shifts; tech tree / shop screen
  */
-export type GameStatus = 'briefing' | 'playing' | 'debrief' | 'fired';
+export type GameStatus = 'briefing' | 'playing' | 'debrief' | 'fired' | 'upgrade';
 
 export type Grade = 'S' | 'A' | 'B' | 'C' | 'D' | 'F';
 
@@ -124,11 +142,14 @@ export type GameEvent =
   | { kind: 'nearMiss'; amount: number; x: number; y: number }
   | { kind: 'divert'; amount: number; x: number; y: number }
   | { kind: 'crash'; x: number; y: number }
+  | { kind: 'groundCrash'; x: number; y: number }
   | { kind: 'emergency'; emergency: Emergency; callsign: string }
+  | { kind: 'crossRunway'; x: number; y: number }
   | { kind: 'rush' }
   | { kind: 'finalRush' }
   | { kind: 'shiftEnd'; grade: Grade }
-  | { kind: 'fired' };
+  | { kind: 'fired' }
+  | { kind: 'purchase'; upgradeId: string };
 
 /** A predicted loss of separation (amber warning) for the renderer. */
 export interface PredictedConflict {
@@ -150,6 +171,7 @@ export interface GameState {
   aircraft: Aircraft[];
   runways: Runway[];
   gates: Gate[];
+  weather: WeatherCell[]; // active weather cells
 
   // failure / score
   incidents: number; // crashes
@@ -168,6 +190,10 @@ export interface GameState {
   nextRushAt: number;
   totalSpawned: number;
   finalRushFired: boolean;
+
+  // weather spawning
+  weatherAccumulator: number;
+  nextWeatherId: number;
 
   // conflict bookkeeping: pairKey "a-b" -> seconds inside separation
   conflicts: Map<string, number>;
@@ -224,6 +250,8 @@ export interface RenderHints {
   hoverEnd: 0 | 1 | null;
   drag: DragHint | null;
   hoverButtonId: string | null;
+  hoverUpgradeId: string | null;
   muted: boolean;
   best: number;
+  upgrades: UpgradeState;
 }

@@ -202,6 +202,20 @@ export class AudioEngine {
         this.noise(0.32, 1.1, 900, 0, 60);
         this.tone(70, 'sine', 0.22, 0.9, 0, 30);
         break;
+      case 'groundCrash':
+        this.noise(0.35, 1.3, 600, 0, 40);
+        this.tone(55, 'sine', 0.25, 1.1, 0, 25);
+        this.noise(0.15, 0.5, 1200, 0.3);
+        break;
+      case 'crossRunway':
+        this.tone(660, 'triangle', 0.04, 0.08);
+        this.tone(440, 'triangle', 0.04, 0.08, 0.09);
+        break;
+      case 'purchase':
+        this.tone(523, 'sine', 0.06, 0.12);
+        this.tone(659, 'sine', 0.06, 0.12, 0.1);
+        this.tone(784, 'sine', 0.07, 0.18, 0.2);
+        break;
       case 'emergency': // mayday two-tone
         this.tone(720, 'square', 0.05, 0.12);
         this.tone(560, 'square', 0.05, 0.12, 0.14);

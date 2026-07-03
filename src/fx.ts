@@ -61,7 +61,15 @@ export class Fx {
       case 'crash':
         this.pop(e.x, e.y - 22, `-$500`, PALETTE.danger, 20, 2);
         this.shake = Math.max(this.shake, 14);
-        this.flash = Math.max(this.flash, 0.35);
+        this.flash = Math.max(this.flash, 0.25);
+        break;
+      case 'groundCrash':
+        this.pop(e.x, e.y - 22, `GROUND CRASH -$500`, PALETTE.danger, 20, 2);
+        this.shake = Math.max(this.shake, 16);
+        this.flash = Math.max(this.flash, 0.3);
+        break;
+      case 'crossRunway':
+        this.pop(e.x, e.y - 10, `CROSSING`, PALETTE.warn, 11, 0.8);
         break;
       case 'emergency':
         this.showBanner(
@@ -76,6 +84,9 @@ export class Fx {
         break;
       case 'finalRush':
         this.showBanner('FINAL RUSH', 'last push of the shift — everything at once', PALETTE.danger, 3.2);
+        break;
+      case 'purchase':
+        this.showBanner('UPGRADE PURCHASED', e.upgradeId, PALETTE.cash, 1.8);
         break;
       default:
         break;

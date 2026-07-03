@@ -15,7 +15,17 @@ import {
   type Grade,
   type Runway,
   type Vec,
+  type WeatherCell,
 } from './types';
+import {
+  type UpgradeState,
+  extraRunwayCount,
+  extraGateCount,
+  fuelMultiplier,
+  turnaroundMultiplier,
+  hasWeatherRadar,
+  createUpgradeState,
+} from './upgrades';
 
 // ----------------------------------------------------------------------------
 // math helpers
@@ -52,11 +62,22 @@ function runwayNumber(headingDeg: number): string {
   if (n === 0) n = 36;
   return n.toString().padStart(2, '0');
 }
-const swapSide = (s: 'L' | 'R'): 'L' | 'R' => (s === 'L' ? 'R' : 'L');
+const swapSide = (s: string): string => (s === 'L' ? 'R' : s === 'R' ? 'L' : s);
 
-function buildRunways(): Runway[] {
-  return CONFIG.runways.map((r, i) => {
-    const makeEnd = (headingDeg: number, side: 'L' | 'R') => {
+/**
+ * Build all active runways: the 3 base runways from CONFIG.runways, plus
+ * any extra expansion runways unlocked by the player's upgrade state.
+ */
+export function buildRunways(upgradeState: UpgradeState): Runway[] {
+  const extraCount = extraRunwayCount(upgradeState);
+  const layouts = [
+    ...CONFIG.runways,
+    ...CONFIG.runwayExpansionSlots.slice(0, extraCount),
+  ];
+
+  return layouts.map((r, i) => {
+    const angleRad = deg(r.headingDeg);
+    const makeEnd = (headingDeg: number, side: string) => {
       const dir = deg(headingDeg);
       const dx = Math.cos(dir);
       const dy = Math.sin(dir);
@@ -72,8 +93,8 @@ function buildRunways(): Runway[] {
       cx: r.cx,
       cy: r.cy,
       length: r.length,
-      width: 18,
-      // primary end (headingDeg) + reciprocal end (headingDeg + 180, L/R swapped)
+      width: 28,
+      angle: angleRad,
       ends: [makeEnd(r.headingDeg, r.side), makeEnd(r.headingDeg + 180, swapSide(r.side))] as [
         Runway['ends'][0],
         Runway['ends'][1],
@@ -83,8 +104,21 @@ function buildRunways(): Runway[] {
   });
 }
 
-export function createGame(seed: number = CONFIG.defaultSeed, day = 1, briefing = false): GameState {
+export function createGame(
+  seed: number = CONFIG.defaultSeed,
+  day = 1,
+  briefing = false,
+  upgradeState: UpgradeState = createUpgradeState(),
+): GameState {
   const rng = createRng(seed);
+
+  // Build gates: base 6 + extra from upgrades
+  const extraGates = extraGateCount(upgradeState);
+  const gateLayouts = [
+    ...CONFIG.gates,
+    ...CONFIG.gateExpansionSlots.slice(0, extraGates),
+  ];
+
   return {
     time: 0,
     paused: false,
@@ -93,8 +127,9 @@ export function createGame(seed: number = CONFIG.defaultSeed, day = 1, briefing 
     shiftLength: CONFIG.shiftSeconds,
     grade: null,
     aircraft: [],
-    runways: buildRunways(),
-    gates: CONFIG.gates.map((g, i) => ({ id: i + 1, x: g.x, y: g.y, occupantId: null })),
+    runways: buildRunways(upgradeState),
+    gates: gateLayouts.map((g, i) => ({ id: i + 1, x: g.x, y: g.y, occupantId: null })),
+    weather: [],
     incidents: 0,
     handled: 0,
     departed: 0,
@@ -109,6 +144,8 @@ export function createGame(seed: number = CONFIG.defaultSeed, day = 1, briefing 
     nextRushAt: CONFIG.rampDurationSeconds + CONFIG.rushWaveEvery,
     totalSpawned: 0,
     finalRushFired: false,
+    weatherAccumulator: 0,
+    nextWeatherId: 1,
     conflicts: new Map(),
     predicted: [],
     crashFx: [],
@@ -120,8 +157,13 @@ export function createGame(seed: number = CONFIG.defaultSeed, day = 1, briefing 
   };
 }
 
-export function restart(seed: number, day = 1, briefing = false): GameState {
-  return createGame(seed, day, briefing);
+export function restart(
+  seed: number,
+  day = 1,
+  briefing = false,
+  upgradeState: UpgradeState = createUpgradeState(),
+): GameState {
+  return createGame(seed, day, briefing, upgradeState);
 }
 
 /** Leave the briefing screen and start the shift. */
@@ -157,7 +199,7 @@ function emergencyChance(time: number): number {
   return lerp(0, CONFIG.emergencyChanceEnd, clamp01((time - CONFIG.emergencyStartAt) / CONFIG.rampDurationSeconds));
 }
 
-function makeAircraft(state: GameState): Aircraft {
+function makeAircraft(state: GameState, fuelMult: number): Aircraft {
   const rng = state.rng;
   // Spawn on a ring around the airport. Early traffic enters from the approach
   // side (east, angle ~0) within a narrow spread; the spread widens to all
@@ -166,7 +208,7 @@ function makeAircraft(state: GameState): Aircraft {
     lerp(CONFIG.spawnAngleSpreadStartDeg, CONFIG.spawnAngleSpreadEndDeg, clamp01(state.time / CONFIG.rampDurationSeconds)),
   );
   const ang = (rng.next() - 0.5) * 2 * spread; // centered on east
-  const radius = 540;
+  const radius = 1000;
   let x = CONFIG.airportX + Math.cos(ang) * radius;
   let y = CONFIG.airportY + Math.sin(ang) * radius;
   x = Math.max(18, Math.min(CONFIG.worldW - 18, x));
@@ -182,7 +224,7 @@ function makeAircraft(state: GameState): Aircraft {
   const t = CONFIG.types[type];
   const callsign = `${rng.pick(CALLSIGNS)}${100 + rng.int(899)}`;
 
-  let fuel = CONFIG.fuelSecondsStart + (rng.next() - 0.5) * 2 * CONFIG.fuelVariance;
+  let fuel = (CONFIG.fuelSecondsStart + (rng.next() - 0.5) * 2 * CONFIG.fuelVariance) * fuelMult;
   let emergency: Aircraft['emergency'] = 'none';
   const eRoll = rng.next();
   if (eRoll < emergencyChance(state.time)) {
@@ -225,6 +267,7 @@ function makeAircraft(state: GameState): Aircraft {
     conflictTimeLeft: 0,
     warn: false,
     trail: [],
+    crossingRunwayId: null,
     px: x,
     py: y,
     ppx: x,
@@ -305,6 +348,26 @@ export function toggleHold(state: GameState, aircraftId: number): boolean {
     ac.waypoints = [];
     state.events.push({ kind: 'hold' });
   }
+  return true;
+}
+
+/**
+ * Authorize a plane waiting at a taxiway-runway crossing to proceed.
+ * The player accepts the risk of crossing an active runway.
+ */
+export function authorizeCrossing(state: GameState, aircraftId: number): boolean {
+  const ac = findAircraft(state, aircraftId);
+  if (!ac || ac.phase !== 'waitCross') return false;
+
+  // Determine which direction the plane was heading before it stopped:
+  // If it has a gateId or taxiTarget near a gate, it's taxiIn; otherwise taxiOut.
+  if (ac.gateId != null || (ac.assignedRunwayId == null && ac.assignedEnd == null)) {
+    ac.phase = 'taxiIn';
+  } else {
+    ac.phase = 'taxiOut';
+  }
+
+  state.events.push({ kind: 'crossRunway', x: ac.x, y: ac.y });
   return true;
 }
 
@@ -433,10 +496,252 @@ function beginTaxiIn(state: GameState, ac: Aircraft): void {
 
 const GROUND_ARRIVE = 9;
 
+// ----------------------------------------------------------------------------
+// taxiway-runway crossing detection
+// ----------------------------------------------------------------------------
+
+/**
+ * Check if a taxiing plane (taxiIn or taxiOut) is approaching a runway it
+ * needs to cross. If so, set the plane to waitCross. The plane waits until
+ * the player calls authorizeCrossing().
+ *
+ * A plane "needs to cross" a runway if:
+ *   1. The runway is NOT the plane's assigned runway (don't stop for your own runway)
+ *   2. The plane's taxi path crosses the runway strip
+ *   3. The plane is close enough to the runway center to warrant stopping
+ *
+ * We check if the plane is within crossingHoldShortDist of a runway center
+ * and heading toward it.
+ */
+function checkTaxiCrossing(state: GameState, ac: Aircraft): boolean {
+  // Only applies to taxiing planes
+  if (ac.phase !== 'taxiIn' && ac.phase !== 'taxiOut') return false;
+  // Already waiting to cross — don't re-check
+  if (ac.crossingRunwayId != null) return false;
+
+  for (const rw of state.runways) {
+    // Don't stop for your own assigned runway
+    if (rw.id === ac.assignedRunwayId) continue;
+
+    // Check if plane is close to the runway strip
+    const dToCenter = dist(ac.x, ac.y, rw.cx, rw.cy);
+    if (dToCenter > CONFIG.crossingHoldShortDist + rw.length / 2) continue;
+
+    // Project the plane's position onto the runway axis to see if the plane
+    // is heading toward the strip and within hold-short distance.
+    const cosA = Math.cos(rw.angle);
+    const sinA = Math.sin(rw.angle);
+    const relX = ac.x - rw.cx;
+    const relY = ac.y - rw.cy;
+
+    // Signed distance along the runway axis and perpendicular to it
+    const alongRunway = relX * cosA + relY * sinA;
+    const perpToRunway = Math.abs(-relX * sinA + relY * cosA);
+
+    // Is the plane close to the runway strip (within the strip + margin)?
+    if (Math.abs(alongRunway) > rw.length / 2 + 10) continue;
+    // Is the plane approaching from outside the strip?
+    if (perpToRunway > CONFIG.crossingHoldShortDist) continue;
+    if (perpToRunway < rw.width / 2 + 2) continue; // Already on the strip — let it pass through
+
+    // Is the plane heading toward the runway (dot product of heading with perpendicular direction)?
+    const headingDx = Math.cos(ac.heading);
+    const headingDy = Math.sin(ac.heading);
+    const perpDirX = -sinA;
+    const perpDirY = cosA;
+    // Check both perpendicular directions
+    const dotPerp = headingDx * perpDirX + headingDy * perpDirY;
+    const toRunwaySign = (-relX * sinA + relY * cosA) > 0 ? -1 : 1;
+    const headingTowardRunway = dotPerp * toRunwaySign > 0.1;
+    if (!headingTowardRunway) continue;
+
+    // Stop and wait for player authorization
+    ac.phase = 'waitCross';
+    ac.crossingRunwayId = rw.id;
+    ac.speed = 0;
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Check if a taxiing/crossing plane has cleared the runway it was crossing.
+ * Clear the crossingRunwayId once the plane is past it.
+ */
+function checkCrossingCleared(ac: Aircraft, state: GameState): void {
+  if (ac.crossingRunwayId == null) return;
+  // Only clear when actively taxiing (after authorization)
+  if (ac.phase === 'waitCross') return;
+
+  const rw = findRunway(state, ac.crossingRunwayId);
+  if (!rw) {
+    ac.crossingRunwayId = null;
+    return;
+  }
+
+  const relX = ac.x - rw.cx;
+  const relY = ac.y - rw.cy;
+  const sinA = Math.sin(rw.angle);
+  const cosA = Math.cos(rw.angle);
+  const perpToRunway = Math.abs(-relX * sinA + relY * cosA);
+
+  // Once the plane is far enough from the runway center perpendicular, it has cleared
+  if (perpToRunway > CONFIG.crossingClearDist) {
+    ac.crossingRunwayId = null;
+  }
+}
+
+// ----------------------------------------------------------------------------
+// ground crash detection
+// ----------------------------------------------------------------------------
+
+/**
+ * Check if a ground plane is physically ON a runway strip that is currently
+ * occupied by a landing or takeoff plane → CRASH.
+ */
+function isOnRunwayStrip(px: number, py: number, rw: Runway): boolean {
+  // Transform point into the runway's local frame
+  const cosA = Math.cos(rw.angle);
+  const sinA = Math.sin(rw.angle);
+  const relX = px - rw.cx;
+  const relY = py - rw.cy;
+  const along = relX * cosA + relY * sinA;
+  const perp = -relX * sinA + relY * cosA;
+  return Math.abs(along) <= rw.length / 2 + 5 && Math.abs(perp) <= rw.width / 2 + 5;
+}
+
+function checkGroundCrash(state: GameState, ac: Aircraft): boolean {
+  // Only check taxiing/crossing planes that are moving
+  const isGroundMoving =
+    ac.phase === 'taxiIn' || ac.phase === 'taxiOut' ||
+    (ac.phase === 'waitCross' && ac.speed > 0);
+  if (!isGroundMoving && ac.crossingRunwayId == null) return false;
+  // When a plane has been authorized to cross (phase reverted to taxiIn/taxiOut
+  // but crossingRunwayId still set), check the crossing runway
+  if (ac.phase === 'taxiIn' || ac.phase === 'taxiOut') {
+    // Check all runways for active operations
+    for (const rw of state.runways) {
+      if (!isOnRunwayStrip(ac.x, ac.y, rw)) continue;
+      // Is there a landing or takeoff plane on this runway right now?
+      for (const other of state.aircraft) {
+        if (other.id === ac.id) continue;
+        if ((other.phase === 'landing' || other.phase === 'takeoff') && other.assignedRunwayId === rw.id) {
+          return true; // CRASH — ground plane on active runway
+        }
+      }
+    }
+  }
+  return false;
+}
+
+// ----------------------------------------------------------------------------
+// weather system
+// ----------------------------------------------------------------------------
+
+function spawnWeatherCell(state: GameState): void {
+  const rng = state.rng;
+
+  // Spawn from an edge of the map
+  const edge = rng.int(4); // 0=top, 1=right, 2=bottom, 3=left
+  let x: number, y: number, vx: number, vy: number;
+  const speed = CONFIG.weatherCellSpeed * (0.5 + rng.next());
+
+  switch (edge) {
+    case 0: // top
+      x = rng.range(100, CONFIG.worldW - 100);
+      y = -CONFIG.weatherCellRadius;
+      vx = (rng.next() - 0.5) * speed;
+      vy = speed;
+      break;
+    case 1: // right
+      x = CONFIG.worldW + CONFIG.weatherCellRadius;
+      y = rng.range(100, CONFIG.worldH - 100);
+      vx = -speed;
+      vy = (rng.next() - 0.5) * speed;
+      break;
+    case 2: // bottom
+      x = rng.range(100, CONFIG.worldW - 100);
+      y = CONFIG.worldH + CONFIG.weatherCellRadius;
+      vx = (rng.next() - 0.5) * speed;
+      vy = -speed;
+      break;
+    default: // left
+      x = -CONFIG.weatherCellRadius;
+      y = rng.range(100, CONFIG.worldH - 100);
+      vx = speed;
+      vy = (rng.next() - 0.5) * speed;
+      break;
+  }
+
+  const cell: WeatherCell = {
+    id: state.nextWeatherId++,
+    x,
+    y,
+    radius: CONFIG.weatherCellRadius * (0.7 + rng.next() * 0.6),
+    vx,
+    vy,
+    ttl: 40 + rng.next() * 40, // 40–80 seconds
+  };
+  state.weather.push(cell);
+}
+
+function updateWeather(state: GameState, dt: number, hasRadar: boolean): void {
+  if (!hasRadar) return;
+
+  // Spawn weather cells periodically
+  state.weatherAccumulator += dt;
+  if (state.weatherAccumulator >= CONFIG.weatherSpawnInterval && state.weather.length < CONFIG.weatherMaxCells) {
+    state.weatherAccumulator -= CONFIG.weatherSpawnInterval;
+    spawnWeatherCell(state);
+  }
+
+  // Update positions and TTL
+  for (const cell of state.weather) {
+    cell.x += cell.vx * dt;
+    cell.y += cell.vy * dt;
+    cell.ttl -= dt;
+  }
+
+  // Remove expired cells or those that have drifted far off-screen
+  state.weather = state.weather.filter(
+    (c) =>
+      c.ttl > 0 &&
+      c.x > -CONFIG.weatherCellRadius * 3 &&
+      c.x < CONFIG.worldW + CONFIG.weatherCellRadius * 3 &&
+      c.y > -CONFIG.weatherCellRadius * 3 &&
+      c.y < CONFIG.worldH + CONFIG.weatherCellRadius * 3,
+  );
+}
+
+/**
+ * Check if an airborne plane is inside a weather cell. If so, apply a diversion
+ * penalty (the plane doesn't crash but gets penalised).
+ */
+function checkWeatherPenalty(state: GameState, ac: Aircraft): boolean {
+  if (!AIRBORNE_PHASES.includes(ac.phase)) return false;
+
+  for (const cell of state.weather) {
+    if (dist(ac.x, ac.y, cell.x, cell.y) < cell.radius) {
+      // Diversion penalty — plane pushed out of the weather
+      state.diversions += 1;
+      state.cash -= CONFIG.diversionPenalty;
+      breakStreak(state);
+      state.events.push({ kind: 'divert', amount: -CONFIG.diversionPenalty, x: ac.x, y: ac.y });
+      return true; // remove the plane
+    }
+  }
+  return false;
+}
+
+// ----------------------------------------------------------------------------
+// per-aircraft step
+// ----------------------------------------------------------------------------
+
 /** Steer + advance one aircraft. Returns a disposition for the caller to act on. */
 type Disposition = 'none' | 'diverted' | 'departed';
 
-function stepAircraft(state: GameState, ac: Aircraft, dt: number): Disposition {
+function stepAircraft(state: GameState, ac: Aircraft, dt: number, turnaroundMult: number): Disposition {
   ac.age += dt;
   const airborne = AIRBORNE_PHASES.includes(ac.phase);
   if (airborne) {
@@ -482,6 +787,8 @@ function stepAircraft(state: GameState, ac: Aircraft, dt: number): Disposition {
       ac.heading = Math.atan2(t.y - ac.y, t.x - ac.x);
       ac.speed = groundBlockedAhead(state, ac) ? 0 : CONFIG.taxiSpeed;
     } else ac.speed = 0;
+  } else if (ac.phase === 'waitCross') {
+    ac.speed = 0; // waiting for player authorization
   } else if (ac.phase === 'atGate' || ac.phase === 'readyDep' || ac.phase === 'holdShort') {
     ac.speed = 0;
   } else {
@@ -504,6 +811,13 @@ function stepAircraft(state: GameState, ac: Aircraft, dt: number): Disposition {
   } else if (ac.trail.length) {
     ac.trail.length = 0;
   }
+
+  // --- taxi crossing detection ---
+  if (ac.phase === 'taxiIn' || ac.phase === 'taxiOut') {
+    checkTaxiCrossing(state, ac);
+  }
+  // Check if plane has cleared a crossing
+  checkCrossingCleared(ac, state);
 
   // --- post-move transitions ---
   if (ac.phase === 'landing') {
@@ -548,6 +862,10 @@ function stepAircraft(state: GameState, ac: Aircraft, dt: number): Disposition {
     }
     return 'none';
   }
+  if (ac.phase === 'waitCross') {
+    // Just waiting — don't move
+    return 'none';
+  }
   if ((ac.phase === 'taxiIn' || ac.phase === 'taxiOut') && ac.taxiTarget) {
     if (dist(ac.x, ac.y, ac.taxiTarget.x, ac.taxiTarget.y) < GROUND_ARRIVE) {
       if (ac.phase === 'taxiOut') {
@@ -555,7 +873,7 @@ function stepAircraft(state: GameState, ac: Aircraft, dt: number): Disposition {
         ac.taxiTarget = null;
       } else if (ac.gateId != null) {
         ac.phase = 'atGate';
-        ac.turnaround = CONFIG.turnaroundSeconds;
+        ac.turnaround = CONFIG.turnaroundSeconds * turnaroundMult;
         ac.taxiTarget = null;
       } else {
         // idling on the ramp — grab a gate as soon as one opens
@@ -619,7 +937,11 @@ function snapshotInterp(state: GameState): void {
   }
 }
 
-export function update(state: GameState, dt: number): void {
+/**
+ * Main sim update. Pass upgradeState so the tick can apply upgrade-aware logic
+ * (fuel multiplier on spawn, turnaround multiplier, weather radar).
+ */
+export function update(state: GameState, dt: number, upgradeState: UpgradeState = createUpgradeState()): void {
   if (state.paused || state.status !== 'playing') {
     // freeze interpolation (geometry may have changed via paused editing)
     for (const ac of state.aircraft) {
@@ -639,6 +961,12 @@ export function update(state: GameState, dt: number): void {
   state.crashFx = state.crashFx.filter((f) => f.ttl > 0);
 
   const diff = dayDifficulty(state.day);
+  const fuelMult = fuelMultiplier(upgradeState);
+  const turnaroundMult = turnaroundMultiplier(upgradeState);
+  const hasRadar = hasWeatherRadar(upgradeState);
+
+  // --- weather ---
+  updateWeather(state, dt, hasRadar);
 
   // --- shift clock ---
   if (!state.finalRushFired && state.time >= state.shiftLength - CONFIG.finalRushLead) {
@@ -646,7 +974,7 @@ export function update(state: GameState, dt: number): void {
     state.events.push({ kind: 'finalRush' });
     for (let k = 0; k < CONFIG.finalRushSize; k++) {
       if (state.aircraft.length < CONFIG.maxAirborneCap) {
-        state.aircraft.push(makeAircraft(state));
+        state.aircraft.push(makeAircraft(state, fuelMult));
         state.totalSpawned += 1;
       }
     }
@@ -663,7 +991,7 @@ export function update(state: GameState, dt: number): void {
   while (state.spawnAccumulator >= state.nextSpawnInterval) {
     state.spawnAccumulator -= state.nextSpawnInterval;
     if (state.aircraft.length < maxAirborne(state.time)) {
-      state.aircraft.push(makeAircraft(state));
+      state.aircraft.push(makeAircraft(state, fuelMult));
       state.totalSpawned += 1;
     }
     state.nextSpawnInterval = spawnInterval(state);
@@ -673,7 +1001,7 @@ export function update(state: GameState, dt: number): void {
     state.events.push({ kind: 'rush' });
     for (let k = 0; k < diff.rushWaveSize; k++) {
       if (state.aircraft.length < CONFIG.maxAirborneCap) {
-        state.aircraft.push(makeAircraft(state));
+        state.aircraft.push(makeAircraft(state, fuelMult));
         state.totalSpawned += 1;
       }
     }
@@ -683,7 +1011,7 @@ export function update(state: GameState, dt: number): void {
   // --- per-aircraft step ---
   const remove = new Set<number>();
   for (const ac of state.aircraft) {
-    const d = stepAircraft(state, ac, dt);
+    const d = stepAircraft(state, ac, dt, turnaroundMult);
     if (d === 'departed') {
       const amount = Math.round(CONFIG.departureSalary * streakMult(state));
       state.cash += amount;
@@ -708,6 +1036,29 @@ export function update(state: GameState, dt: number): void {
     }
   }
 
+  // --- ground crash detection ---
+  for (const ac of state.aircraft) {
+    if (remove.has(ac.id)) continue;
+    if (checkGroundCrash(state, ac)) {
+      state.incidents += 1;
+      state.cash -= CONFIG.crashPenalty;
+      breakStreak(state);
+      state.crashFx.push({ x: ac.x, y: ac.y, ttl: 1.5 });
+      state.events.push({ kind: 'groundCrash', x: ac.x, y: ac.y });
+      remove.add(ac.id);
+    }
+  }
+
+  // --- weather diversion penalties ---
+  if (hasRadar) {
+    for (const ac of state.aircraft) {
+      if (remove.has(ac.id)) continue;
+      if (checkWeatherPenalty(state, ac)) {
+        remove.add(ac.id);
+      }
+    }
+  }
+
   // --- separation / conflict / collisions (airborne traffic only) ---
   for (const ac of state.aircraft) {
     ac.conflict = false;
@@ -728,15 +1079,11 @@ export function update(state: GameState, dt: number): void {
       const key = a.id < b.id ? `${a.id}-${b.id}` : `${b.id}-${a.id}`;
       const prevT = state.conflicts.get(key) ?? 0;
       if (dd < sep) {
-        const t = prevT + dt;
-        next.set(key, t);
+        next.set(key, prevT + dt);
         a.conflict = b.conflict = true;
-        const left = Math.max(0, CONFIG.conflictToCrash - t);
-        a.conflictTimeLeft = a.conflictTimeLeft > 0 ? Math.min(a.conflictTimeLeft, left) : left;
-        b.conflictTimeLeft = b.conflictTimeLeft > 0 ? Math.min(b.conflictTimeLeft, left) : left;
         if (a.conflictPartner == null) a.conflictPartner = b.id;
         if (b.conflictPartner == null) b.conflictPartner = a.id;
-        if (t >= CONFIG.conflictToCrash) crashPairs.push([a, b]);
+        if (dd < CONFIG.planeHitRadius * 1.5) crashPairs.push([a, b]);
       } else {
         if (prevT > 0) {
           // separation regained before collision => near miss
