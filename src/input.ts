@@ -4,11 +4,12 @@
 // side (or tap a plane, then tap the side) to clear it to land from that end;
 // right-click or double-tap = hold; Space = pause; M = mute; R = restart.
 
-import { commandToRunway, toggleHold, setSpeed, commandGoAround, toggleManualHold, commandTakeoff, commandVector } from './sim';
+import { commandToRunway, toggleHold, commandGoAround, toggleManualHold, commandTakeoff } from './sim';
 import type { Aircraft, CareerStats, GameState, RenderHints, Vec, Viewport } from './types';
 import { buttonAt, endButtons, hudButtons, upgradeButtons, floatingButtons, menuButtons, statsButtons, settingsButtons, type UiButton, type UiContext } from './ui';
-import { UPGRADE_DEFS, type UpgradeState } from './upgrades';
-import { sdk } from './sdk';
+import { upgradeAtPoint, upgradeScrollMax } from './upgrade-layout';
+import { type UpgradeState } from './upgrades';
+import { sdk, FULL_LAUNCH } from './sdk';
 
 export interface UiActions {
   startShift(): void; // leave the briefing screen
@@ -109,8 +110,6 @@ export function createInput(ctx: InputContext): InputController {
       selectedWaitCross: !!sel && sel.phase === 'waitCross',
       selectedTaxi: selTaxi,
       selectedTakeoff: !!sel && sel.phase === 'lineUpWait',
-      selectedSpeedTarget: sel?.speedTarget,
-      selectedVectorTarget: sel?.vectorTarget,
       selectedManualHold: sel?.manualHold,
       selectedScreenPos,
     };
@@ -126,42 +125,28 @@ export function createInput(ctx: InputContext): InputController {
     return [...hudButtons(vp, uictx), ...endButtons(vp, state), ...floatingButtons(vp, uictx)];
   }
 
+  function measureCtx(): CanvasRenderingContext2D {
+    return canvas.getContext('2d')!;
+  }
+
   function upgradeAt(sx: number, sy: number): string | null {
     const vp = getViewport();
-    const cardW = 200;
-    const cardH = 110;
-    const gap = 16;
-    const cols = Math.min(4, Math.floor((vp.cssW - 40) / (cardW + gap)));
-    const totalW = cols * cardW + (cols - 1) * gap;
-    const startX = vp.cssW / 2 - totalW / 2;
-    let gridY = 120;
-    
-    const categories = ['runway', 'gates', 'weather', 'radar', 'fuel', 'turnaround'];
-    let col = 0;
-    for (const cat of categories) {
-      const catDefs = UPGRADE_DEFS.filter((d) => d.category === cat);
-      for (const def of catDefs) {
-        const cardX = startX + col * (cardW + gap);
-        const cardY = gridY;
-        if (sx >= cardX && sx <= cardX + cardW && sy >= cardY && sy <= cardY + cardH) {
-          return def.id;
-        }
-        col++;
-        if (col >= cols) {
-          col = 0;
-          gridY += cardH + gap;
-        }
-      }
-    }
-    return null;
+    const ups = actions.getUpgrades();
+    const id = upgradeAtPoint(measureCtx(), vp, shopScrollY, ups, sx, sy);
+    return id;
   }
 
   /** Volume slider geometry helpers. */
   function sliderGeom() {
     const vp = getViewport();
-    const sliderWidth = 300;
-    const sliderLeft = vp.cssW / 2 - 150;
-    const sliderY = vp.cssH / 2 - 80;
+    // Must mirror drawSettingsScreen in render.ts so the hit area sits on the track.
+    const cx = vp.cssW / 2;
+    const volCardW = Math.min(440, vp.cssW - 24);
+    const volCardX = cx - volCardW / 2;
+    const volCardY = vp.cssH / 2 - 120;
+    const sliderWidth = Math.min(300, volCardW - 118);
+    const sliderLeft = volCardX + 24;
+    const sliderY = volCardY + 60 + 4; // track centerline (track y + half of 8px height)
     const sliderH = 36; // hit-test height around the track
     return { sliderLeft, sliderWidth, sliderY, sliderH };
   }
@@ -194,36 +179,22 @@ export function createInput(ctx: InputContext): InputController {
       case 'primary':
         if (state.status === 'debrief') {
           actions.showUpgrades();
-        } else {
+        } else if (FULL_LAUNCH) {
           sdk.requestMidgameAd(() => { actions.nextShift(); }, () => {});
+        } else {
+          actions.nextShift();
         }
         selectedId = null;
         break;
       case 'shop_done':
-        sdk.requestMidgameAd(() => { actions.nextShift(); }, () => {});
+        // Midgame ads are disabled in Basic Launch; advance without gating.
+        if (FULL_LAUNCH) sdk.requestMidgameAd(() => { actions.nextShift(); }, () => {});
+        else actions.nextShift();
         selectedId = null;
         break;
       case 'retry':
         actions.retryShift();
         selectedId = null;
-        break;
-      case 'speed_slow':
-        if (selectedId != null) setSpeed(state, selectedId, 'slow');
-        break;
-      case 'speed_normal':
-        if (selectedId != null) setSpeed(state, selectedId, 'normal');
-        break;
-      case 'speed_expedite':
-        if (selectedId != null) setSpeed(state, selectedId, 'expedite');
-        break;
-      case 'vector_left':
-        if (selectedId != null) commandVector(state, selectedId, -(15 * Math.PI) / 180);
-        break;
-      case 'vector_right':
-        if (selectedId != null) commandVector(state, selectedId, (15 * Math.PI) / 180);
-        break;
-      case 'vector_cancel':
-        if (selectedId != null) commandVector(state, selectedId, null);
         break;
       case 'takeoff':
         if (selectedId != null) commandTakeoff(state, selectedId);
@@ -469,7 +440,8 @@ export function createInput(ctx: InputContext): InputController {
     const state = getState();
     if (state.status === 'upgrade') {
       shopScrollY -= e.deltaY;
-      shopScrollY = Math.max(0, Math.min(800, shopScrollY));
+      const maxScroll = upgradeScrollMax(measureCtx(), getViewport(), actions.getUpgrades());
+      shopScrollY = Math.max(0, Math.min(maxScroll, shopScrollY));
     }
   }
 

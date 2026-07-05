@@ -120,6 +120,47 @@ function run(seed: number, maxSeconds: number, withPlanner: boolean): Result {
   };
 }
 
+/** Regression: many stacked holds must not collide (playtest failure mode, seed 42). */
+function testStackedHolds(): { pass: boolean; incidents: number } {
+  const state = createGame(42);
+  state.status = 'playing';
+  const maxSteps = Math.round(130 / STEP);
+  for (let step = 0; step < maxSteps && state.status === 'playing'; step++) {
+    for (const ac of state.aircraft) {
+      if (ac.phase === 'inbound') toggleHold(state, ac.id);
+    }
+    update(state, STEP);
+  }
+  return { pass: state.incidents === 0, incidents: state.incidents };
+}
+
+/** Regression: second clearance to the same corridor warns but still assigns. */
+function testCorridorBusyWarning(): { pass: boolean; detail: string } {
+  const state = createGame(7);
+  state.status = 'playing';
+  let steps = 0;
+  while (state.aircraft.filter((a) => a.phase === 'inbound').length < 2 && steps < 2400 && state.status === 'playing') {
+    update(state, STEP);
+    steps++;
+  }
+  const inbound = state.aircraft.filter((a) => a.phase === 'inbound');
+  if (inbound.length < 2) return { pass: false, detail: 'not enough inbound aircraft' };
+  const rw = state.runways[0];
+  const [a, b] = inbound;
+  const end: 0 | 1 = 0;
+  const ok1 = commandToRunway(state, a.id, rw.id, end);
+  const phaseA = state.aircraft.find((ac) => ac.id === a.id)?.phase;
+  state.events.length = 0;
+  const ok2 = commandToRunway(state, b.id, rw.id, end);
+  const phaseB = state.aircraft.find((ac) => ac.id === b.id)?.phase;
+  const hasEvent = state.events.some((e) => e.kind === 'corridorBusy');
+  const pass = ok1 && ok2 && phaseA === 'approach' && phaseB === 'approach' && hasEvent;
+  return {
+    pass,
+    detail: `ok1=${ok1} ok2=${ok2} phaseA=${phaseA} phaseB=${phaseB} event=${hasEvent}`,
+  };
+}
+
 console.log('=== Final Approach — headless sim harness ===\n');
 
 // 1) No-input baseline: how fast does it fall apart if the controller does nothing?
@@ -168,6 +209,18 @@ console.log(
 );
 const c = run(CONFIG.defaultSeed + 1, 220, true);
 console.log(`  different seed differs: ${c.handled !== a.handled || c.rngState !== a.rngState ? 'yes' : 'no'}`);
+
+// 3b) Stacked holds must not collide when many aircraft are held at once.
+const stacked = testStackedHolds();
+console.log(
+  `\nStacked holds (seed=42, hold-all-inbound 130s): ${stacked.pass ? 'PASS' : 'FAIL'}  ` +
+    `[incidents=${stacked.incidents}]`,
+);
+
+const corridor = testCorridorBusyWarning();
+console.log(
+  `\nCorridor busy warning: ${corridor.pass ? 'PASS' : 'FAIL'}  [${corridor.detail}]`,
+);
 
 // 4) Performance under load.
 const perf = createGame(CONFIG.defaultSeed);

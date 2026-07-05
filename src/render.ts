@@ -4,9 +4,12 @@
 
 import { CONFIG, PALETTE, MENU_PALETTE, dayDifficulty } from './config';
 import type { Fx } from './fx';
+import { approachCountOnCorridor } from './sim';
 import { AIRBORNE_PHASES } from './types';
 import type { Aircraft, CareerStats, GameState, RenderHints, Runway, Viewport, Vec } from './types';
 import { UPGRADE_DEFS, isUnlocked, canPurchase } from './upgrades';
+import { TIER_DEFS, UPGRADE_HEADER_H, UPGRADE_BOTTOM_BAR_H, upgradeCardWidth, upgradeCardHeight } from './upgrade-layout';
+import { drawFittedText, drawFittedTextLeft, drawWrappedText, measureWrappedLines, truncateText } from './text';
 import { endButtons, hudButtons, upgradeButtons, menuButtons, statsButtons, settingsButtons, floatingButtons, type UiButton, type UiContext } from './ui';
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -47,7 +50,6 @@ function uiContext(state: GameState, hints: RenderHints, vp: Viewport, alpha: nu
     selectedWaitCross: !!sel && sel.phase === 'waitCross',
     selectedTaxi: selTaxi,
     selectedTakeoff: false,
-    selectedSpeedTarget: sel?.speedTarget,
     selectedManualHold: sel?.manualHold,
     selectedScreenPos,
   };
@@ -93,7 +95,7 @@ export function render(
   drawTerrainHints(ctx);
   drawRangeRings(ctx, nowSec);
   drawWeather(ctx, state, nowSec);
-  for (const rw of state.runways) drawRunway(ctx, rw, state, hints);
+  for (const rw of state.runways) drawRunway(ctx, rw, state, hints, nowSec);
   drawGates(ctx, state);
   drawSelectedPath(ctx, state, hints);
   drawDragPreview(ctx, state, hints);
@@ -231,19 +233,43 @@ function drawWeather(ctx: CanvasRenderingContext2D, state: GameState, nowSec: nu
   }
 }
 
-function drawRunway(ctx: CanvasRenderingContext2D, rw: Runway, state: GameState, hints: RenderHints): void {
+function drawRunway(
+  ctx: CanvasRenderingContext2D,
+  rw: Runway,
+  state: GameState,
+  hints: RenderHints,
+  nowSec: number,
+): void {
   const busy = state.time < rw.occupiedUntil;
+  const pulse = 0.55 + 0.45 * Math.sin(nowSec * 4);
 
   // both approach corridors (dashed), each from its threshold out to its finalEntry
   for (let e = 0; e < 2; e++) {
     const end = rw.ends[e];
+    const approachCount = approachCountOnCorridor(state, rw.id, e as 0 | 1);
     const targeted =
       (hints.hoverRunwayId === rw.id && hints.hoverEnd === e) ||
       (hints.drag?.targetRunwayId === rw.id && hints.drag?.targetEnd === e);
     ctx.save();
-    ctx.setLineDash([5, 10]);
-    ctx.lineWidth = targeted ? 3.5 : 2;
-    ctx.strokeStyle = targeted ? PALETTE.blip : busy ? PALETTE.corridorBusy : PALETTE.corridorFree;
+    const stacked = approachCount >= 2;
+    const corridorTaken = approachCount >= 1;
+    if (targeted) {
+      ctx.setLineDash([5, 10]);
+      ctx.lineWidth = 3.5;
+      ctx.strokeStyle = PALETTE.blip;
+    } else if (stacked) {
+      ctx.setLineDash([]);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = `rgba(232,160,48,${(0.45 + 0.45 * pulse).toFixed(3)})`;
+    } else if (corridorTaken) {
+      ctx.setLineDash([]);
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = PALETTE.corridorBusy;
+    } else {
+      ctx.setLineDash([5, 10]);
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = busy ? PALETTE.corridorBusy : PALETTE.corridorFree;
+    }
     ctx.beginPath();
     ctx.moveTo(end.threshold.x, end.threshold.y);
     ctx.lineTo(end.finalEntry.x, end.finalEntry.y);
@@ -259,6 +285,15 @@ function drawRunway(ctx: CanvasRenderingContext2D, rw: Runway, state: GameState,
       ctx.lineTo(end.threshold.x - Math.cos(a + 0.4) * 14, end.threshold.y - Math.sin(a + 0.4) * 14);
       ctx.strokeStyle = PALETTE.blip;
       ctx.lineWidth = 2.5;
+      ctx.stroke();
+    }
+    if (corridorTaken) {
+      ctx.beginPath();
+      ctx.arc(end.threshold.x, end.threshold.y, 16, 0, Math.PI * 2);
+      ctx.strokeStyle = stacked
+        ? `rgba(232,160,48,${(0.5 + 0.4 * pulse).toFixed(3)})`
+        : `rgba(230,160,60,${(0.35 + 0.25 * pulse).toFixed(3)})`;
+      ctx.lineWidth = 2;
       ctx.stroke();
     }
     ctx.restore();
@@ -317,7 +352,9 @@ function drawRunway(ctx: CanvasRenderingContext2D, rw: Runway, state: GameState,
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   for (const end of rw.ends) {
-    ctx.fillStyle = busy ? PALETTE.warn : PALETTE.ringText;
+    const endIdx = end === rw.ends[0] ? 0 : 1;
+    const corridorTaken = approachCountOnCorridor(state, rw.id, endIdx as 0 | 1) >= 1;
+    ctx.fillStyle = corridorTaken || busy ? PALETTE.warn : PALETTE.ringText;
     ctx.fillText(end.name, end.threshold.x + Math.cos(end.dir + Math.PI) * 18, end.threshold.y - 16);
   }
 }
@@ -345,10 +382,17 @@ function drawDragPreview(ctx: CanvasRenderingContext2D, state: GameState, hints:
   const ac = state.aircraft.find((a) => a.id === drag.fromAircraftId);
   if (!ac) return;
   const onTarget = drag.targetRunwayId != null;
+  const isArrival = ac.phase === 'inbound' || ac.phase === 'holding' || ac.phase === 'approach';
+  const corridorBusy =
+    onTarget &&
+    isArrival &&
+    drag.targetRunwayId != null &&
+    drag.targetEnd != null &&
+    approachCountOnCorridor(state, drag.targetRunwayId, drag.targetEnd, drag.fromAircraftId) >= 1;
   ctx.save();
   ctx.lineCap = 'round';
   ctx.setLineDash([3, 8]);
-  ctx.strokeStyle = onTarget ? PALETTE.blip : 'rgba(74,144,217,0.5)';
+  ctx.strokeStyle = corridorBusy ? PALETTE.warn : onTarget ? PALETTE.blip : 'rgba(74,144,217,0.5)';
   ctx.lineWidth = onTarget ? 3 : 2;
   ctx.beginPath();
   ctx.moveTo(ac.x, ac.y);
@@ -356,8 +400,9 @@ function drawDragPreview(ctx: CanvasRenderingContext2D, state: GameState, hints:
   ctx.stroke();
   ctx.setLineDash([]);
   if (onTarget && drag.endName) {
-    const verb = ac.phase === 'readyDep' || ac.phase === 'taxiOut' || ac.phase === 'holdShort' ? 'TAKE OFF' : 'LAND';
-    ctx.fillStyle = PALETTE.text;
+    const verb =
+      ac.phase === 'readyDep' || ac.phase === 'taxiOut' || ac.phase === 'holdShort' ? 'TAKE OFF' : 'LAND';
+    ctx.fillStyle = corridorBusy ? PALETTE.warn : PALETTE.text;
     ctx.font = '700 13px Inter, system-ui, sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
@@ -422,16 +467,6 @@ function drawGates(ctx: CanvasRenderingContext2D, state: GameState): void {
 
 function drawTrailAndVector(ctx: CanvasRenderingContext2D, ac: Aircraft, alpha: number): void {
   if (!AIRBORNE_PHASES.includes(ac.phase)) return;
-  if (ac.vectorTarget != null) {
-    ctx.beginPath();
-    ctx.moveTo(ac.x, ac.y);
-    ctx.lineTo(ac.x + Math.cos(ac.vectorTarget) * 200, ac.y + Math.sin(ac.vectorTarget) * 200);
-    ctx.strokeStyle = '#c084fc';
-    ctx.lineWidth = 1;
-    ctx.setLineDash([5, 5]);
-    ctx.stroke();
-    ctx.setLineDash([]);
-  }
 
   // trail dots
   for (let i = 0; i < ac.trail.length; i++) {
@@ -621,11 +656,12 @@ function drawAircraft(
 
     ctx.font = '700 11px Inter, system-ui, sans-serif';
     ctx.fillStyle = ac.conflict ? PALETTE.danger : emerg || ac.warn ? PALETTE.warn : PALETTE.text;
-    ctx.fillText(ac.callsign, tx, ty);
+    ctx.fillText(truncateText(ctx, ac.callsign, cardW - 8), tx, ty);
     ctx.font = '500 9.5px Inter, system-ui, sans-serif';
     ctx.fillStyle = PALETTE.textDim;
     const tag = ac.emergency === 'medical' ? 'MAYDAY' : ac.emergency === 'lowFuel' ? 'FUEL' : CONFIG.types[ac.type].label;
-    ctx.fillText(`${Math.round(ac.altitude / 100)}·${Math.round(ac.fuelSeconds)}s·${tag}`, tx, ty + 11);
+    const detail = `${Math.round(ac.altitude / 100)}·${Math.round(ac.fuelSeconds)}s·${tag}`;
+    ctx.fillText(truncateText(ctx, detail, cardW - 8), tx, ty + 11);
   } else {
     ctx.font = '600 9.5px Inter, system-ui, sans-serif';
     ctx.fillStyle = PALETTE.textDim;
@@ -730,6 +766,8 @@ function drawHud(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewport, 
   ctx.stroke();
 
   // cash + streak (left)
+  const narrow = vp.cssW < 640;
+  const statsX = narrow ? 130 : 160;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
   ctx.fillStyle = PALETTE.textDim;
@@ -737,11 +775,13 @@ function drawHud(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewport, 
   ctx.fillText(`SHIFT ${state.day}`, 24, 28);
   const shownCash = Math.round(fx.displayCash);
   ctx.fillStyle = shownCash < 0 ? PALETTE.danger : PALETTE.cash;
-  ctx.font = '800 26px Inter, system-ui, sans-serif';
-  ctx.fillText(`$${shownCash}`, 24, 54);
+  ctx.font = `800 ${narrow ? 22 : 26}px Inter, system-ui, sans-serif`;
+  const cashStr = `$${shownCash}`;
+  drawFittedTextLeft(ctx, cashStr, 24, 54, statsX - 28, narrow ? 22 : 26, 14);
   ctx.fillStyle = PALETTE.textDim;
   ctx.font = '500 11px Inter, system-ui, sans-serif';
-  ctx.fillText(`${state.handled} landed · ${state.departed} out`, 160, 38);
+  const landedStr = `${state.handled} landed · ${state.departed} out`;
+  drawFittedTextLeft(ctx, landedStr, statsX, 38, vp.cssW / 2 - statsX - 24, 11, 9);
   if (state.streak >= 2) {
     const mult = Math.min(CONFIG.streakMaxMult, 1 + state.streak * CONFIG.streakStep);
     ctx.fillStyle = PALETTE.gateReady;
@@ -802,8 +842,9 @@ function drawBanner(ctx: CanvasRenderingContext2D, fx: Fx, vp: Viewport, nowSec:
   ctx.save();
   ctx.globalAlpha = a;
   // banner card
-  const bw = 400;
-  roundRectPath(ctx, vp.cssW / 2 - bw / 2, y - 22, bw, 48, 8);
+  const bw = Math.min(400, vp.cssW - 24);
+  const bh = 48;
+  roundRectPath(ctx, vp.cssW / 2 - bw / 2, y - 22, bw, bh, 8);
   ctx.fillStyle = 'rgba(255,255,255,0.92)';
   ctx.fill();
   ctx.strokeStyle = b.color;
@@ -815,11 +856,11 @@ function drawBanner(ctx: CanvasRenderingContext2D, fx: Fx, vp: Viewport, nowSec:
   ctx.font = '800 20px Inter, system-ui, sans-serif';
   ctx.fillStyle = b.color;
   ctx.globalAlpha = a * pulse;
-  ctx.fillText(b.text, vp.cssW / 2, y);
+  drawWrappedText(ctx, b.text, vp.cssW / 2, y, bw - 24, 20, 'center');
   ctx.globalAlpha = a * 0.85;
   ctx.font = '500 12px Inter, system-ui, sans-serif';
   ctx.fillStyle = PALETTE.textDim;
-  ctx.fillText(b.sub, vp.cssW / 2, y + 18);
+  drawWrappedText(ctx, b.sub, vp.cssW / 2, y + 18, bw - 24, 14, 'center');
   ctx.restore();
 }
 
@@ -849,16 +890,25 @@ function drawInboundStrip(ctx: CanvasRenderingContext2D, state: GameState, vp: V
   ctx.textBaseline = 'middle';
   for (const ac of rows) {
     const sel = hints.selectedAircraftId === ac.id;
+    const corridorStacked =
+      ac.phase === 'approach' &&
+      ac.assignedRunwayId != null &&
+      ac.assignedEnd != null &&
+      approachCountOnCorridor(state, ac.assignedRunwayId, ac.assignedEnd, ac.id) >= 1;
     roundRectPath(ctx, x, y, w, rh - 3, 5);
     ctx.fillStyle = sel ? 'rgba(74,144,217,0.1)' : 'rgba(255,255,255,0.5)';
     ctx.fill();
     ctx.lineWidth = 1;
-    ctx.strokeStyle = ac.conflict ? PALETTE.danger : ac.emergency !== 'none' ? PALETTE.warn : PALETTE.panelEdge;
+    ctx.strokeStyle = ac.conflict
+      ? PALETTE.danger
+      : corridorStacked || ac.emergency !== 'none'
+        ? PALETTE.warn
+        : PALETTE.panelEdge;
     ctx.stroke();
 
     ctx.textAlign = 'left';
     ctx.fillStyle = PALETTE.text;
-    ctx.fillText(ac.callsign, x + 8, y + rh / 2 - 1);
+    ctx.fillText(truncateText(ctx, ac.callsign, w * 0.45), x + 8, y + rh / 2 - 1);
 
     const approachEndName =
       ac.assignedRunwayId != null && ac.assignedEnd != null
@@ -875,8 +925,8 @@ function drawInboundStrip(ctx: CanvasRenderingContext2D, state: GameState, vp: V
               ? 'LOW FUEL'
               : 'INBOUND';
     ctx.textAlign = 'right';
-    ctx.fillStyle = ac.emergency !== 'none' ? PALETTE.warn : PALETTE.textDim;
-    ctx.fillText(status, x + w - 8, y + rh / 2 - 1);
+    ctx.fillStyle = ac.emergency !== 'none' || corridorStacked ? PALETTE.warn : PALETTE.textDim;
+    ctx.fillText(truncateText(ctx, status, w * 0.45), x + w - 8, y + rh / 2 - 1);
 
     // fuel bar
     const fk = Math.max(0, Math.min(1, ac.fuelSeconds / CONFIG.fuelSecondsStart));
@@ -888,19 +938,24 @@ function drawInboundStrip(ctx: CanvasRenderingContext2D, state: GameState, vp: V
 }
 
 function drawHelp(ctx: CanvasRenderingContext2D, vp: Viewport): void {
-  const lines = [
+  const rawLines = [
     'Drag a plane to a runway side: land / take off there',
+    'One approach per runway side — HOLD extras (right-click or HOLD button)',
     'Landed planes taxi to a gate, turn around, go green = ready',
     'Tap waiting planes to authorize runway crossing · Space: pause',
   ];
+  const maxW = vp.cssW - 36;
+  const lineH = 16;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
   ctx.font = '400 11px Inter, system-ui, sans-serif';
   ctx.fillStyle = PALETTE.textDim;
-  let y = vp.cssH - 20 - (lines.length - 1) * 16;
-  for (const l of lines) {
-    ctx.fillText(l, 18, y);
-    y += 16;
+  const allLines: string[] = [];
+  for (const l of rawLines) allLines.push(...measureWrappedLines(ctx, l, maxW));
+  let y = vp.cssH - 20 - (allLines.length - 1) * lineH;
+  for (const ln of allLines) {
+    ctx.fillText(ln, 18, y);
+    y += lineH;
   }
 }
 
@@ -923,26 +978,40 @@ function panelCard(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 }
 
 function drawHint(ctx: CanvasRenderingContext2D, vp: Viewport): void {
-  const w = 480;
-  const h = 100;
+  const w = Math.min(520, vp.cssW - 24);
+  const s = Math.min(1, w / 520);
+  const lines = [
+    { text: 'TOWER — your shift starts now', font: `700 ${15 * s}px Inter, system-ui, sans-serif`, color: PALETTE.blip },
+    { text: 'Drag a plane to a runway side to clear it to land.', font: `400 ${13 * s}px Inter, system-ui, sans-serif`, color: PALETTE.text },
+    { text: "Stacking a corridor is risky — you'll get a warning if another plane is on approach.", font: `400 ${13 * s}px Inter, system-ui, sans-serif`, color: PALETTE.text },
+    { text: 'HOLD the rest: right-click a plane, or select it and tap HOLD.', font: `400 ${12 * s}px Inter, system-ui, sans-serif`, color: PALETTE.textDim },
+    { text: "Keep them apart · watch fuel · Space pauses but commands still work.", font: `400 ${12 * s}px Inter, system-ui, sans-serif`, color: PALETTE.textDim },
+  ];
+  const lineH = 18 * s;
+  const padY = 26;
+  const textMaxW = w - 32;
+  let contentH = padY;
+  for (const ln of lines) {
+    ctx.font = ln.font;
+    contentH += measureWrappedLines(ctx, ln.text, textMaxW).length * lineH + 2;
+  }
+  const h = contentH + 16;
   const x = vp.cssW / 2 - w / 2;
   const y = vp.cssH - h - 34;
   panelCard(ctx, x, y, w, h);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
-  ctx.fillStyle = PALETTE.blip;
-  ctx.font = '700 15px Inter, system-ui, sans-serif';
-  ctx.fillText('TOWER — your shift starts now', vp.cssW / 2, y + 28);
-  ctx.fillStyle = PALETTE.text;
-  ctx.font = '400 13px Inter, system-ui, sans-serif';
-  ctx.fillText('Drag a plane to the side of a runway you want it to land on.', vp.cssW / 2, y + 52);
-  ctx.fillStyle = PALETTE.textDim;
-  ctx.font = '400 12px Inter, system-ui, sans-serif';
-  ctx.fillText("Each runway takes traffic from both ends · keep planes apart · don't run them out of fuel.", vp.cssW / 2, y + 74);
+  let yy = y + padY;
+  for (const ln of lines) {
+    ctx.font = ln.font;
+    ctx.fillStyle = ln.color;
+    yy = drawWrappedText(ctx, ln.text, vp.cssW / 2, yy, textMaxW, lineH, 'center');
+    yy += 2;
+  }
 }
 
 function drawPausedBanner(ctx: CanvasRenderingContext2D, vp: Viewport): void {
-  const w = 340;
+  const w = Math.min(340, vp.cssW - 24);
   const h = 38;
   const x = vp.cssW / 2 - w / 2;
   const y = 78;
@@ -956,7 +1025,7 @@ function drawPausedBanner(ctx: CanvasRenderingContext2D, vp: Viewport): void {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.font = '600 13px Inter, system-ui, sans-serif';
-  ctx.fillText('PAUSED — clear / dispatch / hold freely', vp.cssW / 2, y + h / 2 + 1);
+  drawFittedText(ctx, 'PAUSED — clear / dispatch / hold freely', vp.cssW / 2, y + h / 2 + 1, w - 16, 13, 10);
 }
 
 function drawBriefing(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewport, hints: RenderHints, nowSec: number): void {
@@ -965,53 +1034,89 @@ function drawBriefing(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewp
   const cx = vp.cssW / 2;
   const cy = vp.cssH / 2;
 
-  // main card
-  panelCard(ctx, cx - 300, cy - 200, 600, 400);
+  // main card (responsive so it doesn't clip on mobile)
+  const cardW = Math.min(600, vp.cssW - 16);
+  const cardH = 474;
+  const s = Math.min(1, cardW / 600);
+  panelCard(ctx, cx - cardW / 2, cy - cardH / 2, cardW, cardH);
 
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
   ctx.fillStyle = PALETTE.blip;
-  ctx.font = '900 48px Inter, system-ui, sans-serif';
-  ctx.fillText('FINAL APPROACH', cx, cy - 120);
+  ctx.font = `900 ${48 * s}px Inter, system-ui, sans-serif`;
+  ctx.fillText('FINAL APPROACH', cx, cy - 150);
   ctx.fillStyle = PALETTE.textDim;
-  ctx.font = '500 14px Inter, system-ui, sans-serif';
-  ctx.fillText('you are the tower. everyone lands, everyone leaves, nobody touches.', cx, cy - 90);
+  ctx.font = `500 ${13 * s}px Inter, system-ui, sans-serif`;
+  drawWrappedText(ctx, 'you are the tower. everyone lands, everyone leaves, nobody touches.', cx, cy - 122, cardW - 32, 16 * s, 'center');
 
   ctx.fillStyle = PALETTE.text;
   ctx.font = '700 18px Inter, system-ui, sans-serif';
-  ctx.fillText(`SHIFT ${state.day}`, cx, cy - 44);
+  ctx.fillText(`SHIFT ${state.day}`, cx, cy - 92);
   ctx.fillStyle = PALETTE.textDim;
-  ctx.font = '500 13px Inter, system-ui, sans-serif';
-  ctx.fillText(`${fmtTime(state.shiftLength)} on the clock · target $${dayDifficulty(state.day).gradeTarget} for an A`, cx, cy - 22);
+  ctx.font = `500 ${12.5 * s}px Inter, system-ui, sans-serif`;
+  const clockLine = `${fmtTime(state.shiftLength)} on the clock · target $${dayDifficulty(state.day).gradeTarget} for an A`;
+  drawWrappedText(ctx, clockLine, cx, cy - 72, cardW - 32, 15 * s, 'center');
   if (hints.best > 0) {
     ctx.fillStyle = PALETTE.cash;
-    ctx.fillText(`career best $${hints.best}`, cx, cy);
+    drawWrappedText(ctx, `career best $${hints.best}`, cx, cy - 54, cardW - 32, 15 * s, 'center');
   }
 
   const rows: [string, string][] = [
-    ['DRAG a plane to a runway side', 'clears it to land from that end'],
-    ['GREEN planes at gates are boarded', 'drag them to a runway to launch'],
-    ['TAP waiting ground planes', 'to authorize runway crossing'],
+    ['DRAG a plane to a runway side', 'clears an arrival to land there'],
+    ['BUSY corridor warning', 'you can still clear a second plane — but separation is on you'],
+    ['RIGHT-CLICK · HOLD button', 'orbit extra arrivals while you sequence one at a time'],
+    ['GREEN planes are boarded', 'drag them to a runway to launch'],
+    ['TAP a plane holding short', 'to authorize it across a runway'],
+    ['CLICK an airborne plane', 'ABORT to go around'],
     ['SPACE', 'pause — you can still give commands'],
+    ['TWO crashes ends your shift', 'keep them apart · watch the fuel'],
   ];
-  let y = cy + 40;
-  ctx.font = '600 13px Inter, system-ui, sans-serif';
+  let y = cy - 28;
+  const colGap = 10 * s;
+  const stacked = cardW < 520;
+  const halfW = cardW / 2 - colGap - 16;
+  const rowFont = `600 ${12.5 * s}px Inter, system-ui, sans-serif`;
+  ctx.font = rowFont;
+  const rowLineH = 16 * s;
   for (const [k, v] of rows) {
-    ctx.textAlign = 'right';
-    ctx.fillStyle = PALETTE.blip;
-    ctx.fillText(k, cx - 10, y);
-    ctx.textAlign = 'left';
-    ctx.fillStyle = PALETTE.textDim;
-    ctx.fillText(v, cx + 10, y);
-    y += 24;
+    if (stacked) {
+      const leftX = cx - cardW / 2 + 20;
+      ctx.textAlign = 'left';
+      ctx.fillStyle = PALETTE.blip;
+      drawWrappedText(ctx, k, leftX, y, cardW - 40, rowLineH, 'left');
+      const keyLines = measureWrappedLines(ctx, k, cardW - 40);
+      const valY = y + keyLines.length * rowLineH + 2;
+      ctx.fillStyle = PALETTE.textDim;
+      const endY = drawWrappedText(ctx, v, leftX + 12, valY, cardW - 52, rowLineH, 'left');
+      const valLines = measureWrappedLines(ctx, v, cardW - 52);
+      y = Math.max(endY, valY + valLines.length * rowLineH) + 8;
+    } else {
+      ctx.textAlign = 'right';
+      ctx.fillStyle = PALETTE.blip;
+      const keyLines = measureWrappedLines(ctx, k, halfW);
+      let ky = y;
+      for (const ln of keyLines) {
+        ctx.fillText(ln, cx - colGap, ky);
+        ky += rowLineH;
+      }
+      ctx.textAlign = 'left';
+      ctx.fillStyle = PALETTE.textDim;
+      const valLines = measureWrappedLines(ctx, v, halfW);
+      let vy = y;
+      for (const ln of valLines) {
+        ctx.fillText(ln, cx + colGap, vy);
+        vy += rowLineH;
+      }
+      y += Math.max(keyLines.length, valLines.length) * rowLineH + 6;
+    }
   }
 
   const pulse = 0.55 + 0.45 * Math.sin(nowSec * 3);
   ctx.textAlign = 'center';
   ctx.globalAlpha = pulse;
   ctx.fillStyle = PALETTE.blip;
-  ctx.font = '700 16px Inter, system-ui, sans-serif';
-  ctx.fillText('CLICK ANYWHERE TO START YOUR SHIFT', cx, y + 34);
+  ctx.font = `700 ${15 * s}px Inter, system-ui, sans-serif`;
+  drawFittedText(ctx, 'CLICK ANYWHERE TO START YOUR SHIFT', cx, y + 30, cardW - 32, 15 * s, 11);
   ctx.globalAlpha = 1;
 }
 
@@ -1024,23 +1129,34 @@ const GRADE_COLOR: Record<string, string> = {
   F: '#E85454',
 };
 
-function drawStatsRows(ctx: CanvasRenderingContext2D, state: GameState, cx: number, y0: number): number {
+function drawStatsRows(ctx: CanvasRenderingContext2D, state: GameState, cx: number, y0: number, panelW = 500): number {
   const rows: [string, string][] = [
     ['landed / departed', `${state.handled} / ${state.departed}`],
     ['best streak', `×${state.bestStreak}`],
     ['near misses / go-arounds', `${state.nearMisses} / ${state.goArounds}`],
     ['diverted / crashed', `${state.diversions} / ${state.incidents}`],
   ];
+  const halfW = panelW / 2 - 24;
   ctx.font = '500 13px Inter, system-ui, sans-serif';
   let y = y0;
   for (const [k, v] of rows) {
     ctx.textAlign = 'right';
     ctx.fillStyle = PALETTE.textDim;
-    ctx.fillText(k, cx - 12, y);
+    const keyLines = measureWrappedLines(ctx, k, halfW);
+    let ky = y;
+    for (const ln of keyLines) {
+      ctx.fillText(ln, cx - 12, ky);
+      ky += 18;
+    }
     ctx.textAlign = 'left';
     ctx.fillStyle = PALETTE.text;
-    ctx.fillText(v, cx + 12, y);
-    y += 22;
+    const valLines = measureWrappedLines(ctx, v, halfW);
+    let vy = y;
+    for (const ln of valLines) {
+      ctx.fillText(ln, cx + 12, vy);
+      vy += 18;
+    }
+    y += Math.max(keyLines.length, valLines.length) * 18 + 4;
   }
   return y;
 }
@@ -1084,7 +1200,7 @@ function drawDebrief(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewpo
     ctx.fillText(`career best $${hints.best}`, cx, cy + 6);
   }
 
-  drawStatsRows(ctx, state, cx, cy + 34);
+  drawStatsRows(ctx, state, cx, cy + 34, 500);
 }
 
 function drawFired(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewport, hints: RenderHints, nowSec: number): void {
@@ -1103,7 +1219,7 @@ function drawFired(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewport
   ctx.fillText("YOU'RE FIRED", cx, cy - 100);
   ctx.fillStyle = PALETTE.textDim;
   ctx.font = '500 14px Inter, system-ui, sans-serif';
-  ctx.fillText(`two incidents on shift ${state.day} · the FAA would like a word`, cx, cy - 74);
+  drawWrappedText(ctx, `two incidents on shift ${state.day} · the FAA would like a word`, cx, cy - 74, 480, 18, 'center');
 
   ctx.fillStyle = PALETTE.text;
   ctx.font = '700 22px Inter, system-ui, sans-serif';
@@ -1114,22 +1230,14 @@ function drawFired(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewport
     ctx.fillText(`career best $${hints.best}`, cx, cy - 8);
   }
 
-  drawStatsRows(ctx, state, cx, cy + 24);
+  drawStatsRows(ctx, state, cx, cy + 24, 520);
 }
 
 // ----------------------------------------------------------------------------
 // Upgrade / shop screen — scrollable tiered list
 // ----------------------------------------------------------------------------
 
-const TIER_DEFS: { label: string; ids: string[] }[] = [
-  { label: 'TIER 1 — STARTER UPGRADES', ids: ['runway_2', 'gates_1', 'radar_range_1', 'fuel_reserves', 'fast_turnaround_1'] },
-  { label: 'TIER 2 — ADVANCED', ids: ['runway_3', 'gates_2', 'radar_range_2', 'fast_turnaround_2', 'weather_radar'] },
-  { label: 'TIER 3 — EXPANSION', ids: ['runway_4', 'gates_3'] },
-  { label: 'TIER 4 — ULTIMATE', ids: ['runway_5'] },
-];
-
 function drawUpgradeScreen(ctx: CanvasRenderingContext2D, _state: GameState, vp: Viewport, hints: RenderHints, nowSec: number): void {
-  // MENU_PALETTE light background
   const grad = ctx.createLinearGradient(0, 0, 0, vp.cssH);
   grad.addColorStop(0, MENU_PALETTE.bgGrad1);
   grad.addColorStop(1, MENU_PALETTE.bgGrad2);
@@ -1138,12 +1246,10 @@ function drawUpgradeScreen(ctx: CanvasRenderingContext2D, _state: GameState, vp:
 
   const cx = vp.cssW / 2;
   const ups = hints.upgrades;
-  const scrollY = (hints as any).shopScrollY ?? 0;
+  const scrollY = hints.shopScrollY ?? 0;
+  const headerH = UPGRADE_HEADER_H;
+  const bottomBarH = UPGRADE_BOTTOM_BAR_H;
 
-  const headerH = 110;
-  const bottomBarH = 90;
-
-  // ── Sticky header ──
   ctx.save();
   ctx.shadowColor = MENU_PALETTE.cardShadow;
   ctx.shadowBlur = 12;
@@ -1153,7 +1259,6 @@ function drawUpgradeScreen(ctx: CanvasRenderingContext2D, _state: GameState, vp:
   ctx.fill();
   ctx.shadowBlur = 0;
   ctx.shadowOffsetY = 0;
-  // bottom divider
   ctx.strokeStyle = MENU_PALETTE.divider;
   ctx.lineWidth = 1;
   ctx.beginPath();
@@ -1167,16 +1272,13 @@ function drawUpgradeScreen(ctx: CanvasRenderingContext2D, _state: GameState, vp:
   ctx.fillStyle = MENU_PALETTE.text;
   ctx.font = '900 28px Inter, system-ui, sans-serif';
   ctx.fillText('AIRPORT UPGRADES', cx, 42);
-
-  // bank
   ctx.fillStyle = MENU_PALETTE.accent;
   ctx.font = '800 24px Inter, system-ui, sans-serif';
-  ctx.fillText(`Bank: $${ups.bankBalance.toLocaleString()}`, cx, 74);
+  drawFittedText(ctx, `Bank: $${ups.bankBalance.toLocaleString()}`, cx, 74, vp.cssW - 48, 24, 14);
   ctx.fillStyle = MENU_PALETTE.textDim;
   ctx.font = '500 12px Inter, system-ui, sans-serif';
-  ctx.fillText('Spend your earnings to improve the airport', cx, 96);
+  drawWrappedText(ctx, 'Spend your earnings to improve the airport', cx, 96, vp.cssW - 48, 14, 'center');
 
-  // ── Scrollable content area ──
   const contentTop = headerH;
   const contentBottom = vp.cssH - bottomBarH;
   ctx.save();
@@ -1184,21 +1286,21 @@ function drawUpgradeScreen(ctx: CanvasRenderingContext2D, _state: GameState, vp:
   ctx.rect(0, contentTop, vp.cssW, contentBottom - contentTop);
   ctx.clip();
 
-  const cardW = Math.min(560, vp.cssW - 60);
-  const cardH = 68;
+  const cardW = upgradeCardWidth(vp);
   const cardGap = 10;
   const tierGap = 18;
   const tierHeaderH = 40;
+  const rightColW = 100;
+  const textLeft = 60;
+  const textMaxW = cardW - textLeft - rightColW - 8;
   let yy = contentTop + 20 - scrollY;
 
   for (let ti = 0; ti < TIER_DEFS.length; ti++) {
     const tier = TIER_DEFS[ti];
-    // check if all items in previous tiers are purchased (prerequisites)
-    const tierLocked = ti > 0 && TIER_DEFS.slice(0, ti).some(prev =>
-      prev.ids.some(id => !ups.purchased.has(id as any))
+    const tierLocked = ti > 0 && TIER_DEFS.slice(0, ti).some((prev) =>
+      prev.ids.some((id) => !ups.purchased.has(id)),
     );
 
-    // tier header bar
     const thY = yy;
     ctx.save();
     if (tierLocked) ctx.globalAlpha = 0.45;
@@ -1213,26 +1315,26 @@ function drawUpgradeScreen(ctx: CanvasRenderingContext2D, _state: GameState, vp:
     ctx.textBaseline = 'middle';
     ctx.fillStyle = MENU_PALETTE.textSecondary;
     ctx.font = '700 13px Inter, system-ui, sans-serif';
-    ctx.fillText(tierLocked ? `🔒 ${tier.label}` : tier.label, cx - cardW / 2 + 16, thY + tierHeaderH / 2);
+    const tierLabel = tierLocked ? `🔒 ${tier.label}` : tier.label;
+    ctx.fillText(truncateText(ctx, tierLabel, cardW - 32), cx - cardW / 2 + 16, thY + tierHeaderH / 2);
     if (tierLocked) ctx.restore();
     yy += tierHeaderH + cardGap;
 
     for (const id of tier.ids) {
-      const def = UPGRADE_DEFS.find(d => d.id === id);
+      const def = UPGRADE_DEFS.find((d) => d.id === id);
       if (!def) continue;
 
       const purchased = ups.purchased.has(def.id);
       const unlocked = isUnlocked(ups, def.id);
       const affordable = canPurchase(ups, def.id);
       const hovered = hints.hoverUpgradeId === def.id;
-
+      const cardH = upgradeCardHeight(ctx, cardW, def.description);
       const cardX = cx - cardW / 2;
       const cardY = yy;
 
       ctx.save();
       if (tierLocked) ctx.globalAlpha = 0.35;
 
-      // card shadow
       if (hovered && !purchased && !tierLocked) {
         ctx.shadowColor = MENU_PALETTE.cardShadowHover;
         ctx.shadowBlur = 14;
@@ -1256,22 +1358,20 @@ function drawUpgradeScreen(ctx: CanvasRenderingContext2D, _state: GameState, vp:
       ctx.strokeStyle = purchased ? MENU_PALETTE.success : affordable ? MENU_PALETTE.accent : MENU_PALETTE.cardBorder;
       ctx.stroke();
 
-      // icon (left)
       ctx.font = '28px Inter, system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(def.icon, cardX + 32, cardY + cardH / 2);
 
-      // name + description (middle)
       ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
       ctx.font = '700 14px Inter, system-ui, sans-serif';
       ctx.fillStyle = purchased ? MENU_PALETTE.success : !unlocked || tierLocked ? MENU_PALETTE.textDim : MENU_PALETTE.text;
-      ctx.fillText(def.name, cardX + 60, cardY + 24);
+      drawFittedTextLeft(ctx, def.name, cardX + textLeft, cardY + 22, textMaxW, 14, 11);
       ctx.font = '400 11.5px Inter, system-ui, sans-serif';
       ctx.fillStyle = MENU_PALETTE.textDim;
-      ctx.fillText(def.description, cardX + 60, cardY + 44);
+      drawWrappedText(ctx, def.description, cardX + textLeft, cardY + 40, textMaxW, 14, 'left');
 
-      // status (right)
       ctx.textAlign = 'right';
       ctx.textBaseline = 'middle';
       if (purchased) {
@@ -1285,7 +1385,7 @@ function drawUpgradeScreen(ctx: CanvasRenderingContext2D, _state: GameState, vp:
       } else {
         ctx.fillStyle = affordable ? MENU_PALETTE.success : MENU_PALETTE.danger;
         ctx.font = '800 16px Inter, system-ui, sans-serif';
-        ctx.fillText(`$${def.cost.toLocaleString()}`, cardX + cardW - 18, cardY + cardH / 2);
+        ctx.fillText(truncateText(ctx, `$${def.cost.toLocaleString()}`, rightColW - 8), cardX + cardW - 18, cardY + cardH / 2);
       }
 
       ctx.restore();
@@ -1294,7 +1394,7 @@ function drawUpgradeScreen(ctx: CanvasRenderingContext2D, _state: GameState, vp:
     yy += tierGap;
   }
 
-  ctx.restore(); // end clip
+  ctx.restore();
   void nowSec;
 }
 
@@ -1346,8 +1446,8 @@ function drawMainMenu(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewp
   const cx = vp.cssW / 2;
   const cy = vp.cssH / 2;
 
-  // ── main card panel ──
-  const cardW = 540;
+  // ── main card panel (responsive width so it never clips on mobile) ──
+  const cardW = Math.min(540, vp.cssW - 16);
   const cardH = 380;
   const cardX = cx - cardW / 2;
   const cardY = cy - cardH / 2 - 10;
@@ -1366,17 +1466,24 @@ function drawMainMenu(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewp
   ctx.stroke();
   ctx.restore();
 
-  // ── title ──
+  // ── title (scaled down to fit the card on narrow screens) ──
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
   ctx.fillStyle = MENU_PALETTE.accent;
-  ctx.font = '900 52px Inter, system-ui, sans-serif';
+  const titleMax = cardW - 56;
+  let titleSize = 52;
+  ctx.font = `900 ${titleSize}px Inter, system-ui, sans-serif`;
+  const titleW = ctx.measureText('FINAL APPROACH').width;
+  if (titleW > titleMax) {
+    titleSize = Math.max(28, Math.floor(titleSize * (titleMax / titleW)));
+    ctx.font = `900 ${titleSize}px Inter, system-ui, sans-serif`;
+  }
   ctx.fillText('FINAL APPROACH', cx, cardY + 72);
 
   // ── subtitle ──
   ctx.fillStyle = MENU_PALETTE.textSecondary;
   ctx.font = '500 16px Inter, system-ui, sans-serif';
-  ctx.fillText('you are the tower', cx, cardY + 100);
+  drawWrappedText(ctx, 'you are the tower', cx, cardY + 100, cardW - 32, 18, 'center');
 
   // ── divider line ──
   ctx.strokeStyle = MENU_PALETTE.divider;
@@ -1391,15 +1498,7 @@ function drawMainMenu(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewp
   const bank = hints.upgrades?.bankBalance ?? 0;
   ctx.fillStyle = MENU_PALETTE.textSecondary;
   ctx.font = '600 14px Inter, system-ui, sans-serif';
-  ctx.fillText(`Day ${day}  ·  Bank: $${bank.toLocaleString()}`, cx, cardY + 142);
-
-  // ── pulsing CTA below buttons area ──
-  const pulse = 0.55 + 0.45 * Math.sin(nowSec * 2.5);
-  ctx.globalAlpha = pulse;
-  ctx.fillStyle = MENU_PALETTE.textDim;
-  ctx.font = '500 12px Inter, system-ui, sans-serif';
-  ctx.fillText('manage your airport, land every plane', cx, cardY + cardH - 24);
-  ctx.globalAlpha = 1;
+  drawFittedText(ctx, `Day ${day}  ·  Bank: $${bank.toLocaleString()}`, cx, cardY + 142, cardW - 32, 14, 11);
 }
 
 // ----------------------------------------------------------------------------
@@ -1435,9 +1534,9 @@ function drawStatsScreen(ctx: CanvasRenderingContext2D, vp: Viewport, hints: Ren
   ctx.stroke();
 
   // stat cards: 2 cols × 4 rows
-  const cw = 230;
-  const ch = 90;
   const gap = 16;
+  const cw = Math.min(230, (vp.cssW - gap - 48) / 2);
+  const ch = 90;
   const gridW = cw * 2 + gap;
   const sx = cx - gridW / 2;
   let sy = 92;
@@ -1490,7 +1589,7 @@ function drawStatsScreen(ctx: CanvasRenderingContext2D, vp: Viewport, hints: Ren
     // value
     ctx.font = '800 24px Inter, system-ui, sans-serif';
     ctx.fillStyle = item.color ?? MENU_PALETTE.text;
-    ctx.fillText(item.value, x + 50, y + 62);
+    drawFittedTextLeft(ctx, item.value, x + 50, y + 62, cw - 58, 24, 14);
   }
 
   // grade breakdown card (8th card, col=1 row=3)
@@ -1576,8 +1675,8 @@ function drawSettingsScreen(ctx: CanvasRenderingContext2D, vp: Viewport, hints: 
   ctx.lineTo(cx + 80, 72);
   ctx.stroke();
 
-  // ── Volume section card ──
-  const volCardW = 440;
+  // ── Volume section card (responsive width; must mirror input.ts sliderGeom) ──
+  const volCardW = Math.min(440, vp.cssW - 24);
   const volCardH = 120;
   const volCardX = cx - volCardW / 2;
   const volCardY = vp.cssH / 2 - 120;
@@ -1602,8 +1701,8 @@ function drawSettingsScreen(ctx: CanvasRenderingContext2D, vp: Viewport, hints: 
   ctx.font = '700 12px Inter, system-ui, sans-serif';
   ctx.fillText('MASTER VOLUME', volCardX + 24, volCardY + 32);
 
-  // slider track
-  const trackW = 300;
+  // slider track — leave room to the right for the % readout
+  const trackW = Math.min(300, volCardW - 118);
   const trackH = 8;
   const trackX = volCardX + 24;
   const trackY = volCardY + 60;
@@ -1648,7 +1747,7 @@ function drawSettingsScreen(ctx: CanvasRenderingContext2D, vp: Viewport, hints: 
   ctx.fillText(`${Math.round(volume * 100)}%`, trackX + trackW + 16, trackY + trackH / 2);
 
   // ── Danger zone section ──
-  const dzCardW = 440;
+  const dzCardW = Math.min(440, vp.cssW - 24);
   const dzCardH = confirmingReset ? 140 : 100;
   const dzCardX = cx - dzCardW / 2;
   const dzCardY = vp.cssH / 2 + 30;
@@ -1677,10 +1776,10 @@ function drawSettingsScreen(ctx: CanvasRenderingContext2D, vp: Viewport, hints: 
 
   if (confirmingReset) {
     ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
     ctx.fillStyle = MENU_PALETTE.danger;
     ctx.font = '600 14px Inter, system-ui, sans-serif';
-    ctx.fillText('Are you sure? This cannot be undone.', cx, dzCardY + 60);
-    // confirm/cancel buttons drawn by drawButtons
+    drawWrappedText(ctx, 'Are you sure? This cannot be undone.', cx, dzCardY + 60, dzCardW - 32, 16, 'center');
   }
   void nowSec;
 }
@@ -1728,8 +1827,9 @@ function drawButtons(
       }
 
       ctx.fillStyle = isPrimary || isDanger ? MENU_PALETTE.btnPrimaryText : MENU_PALETTE.btnSecondaryText;
-      ctx.font = `700 ${b.h >= 50 ? 15 : 13}px Inter, system-ui, sans-serif`;
-      ctx.fillText(b.label, b.x + b.w / 2, b.y + b.h / 2 + 1);
+      const basePx = b.h >= 50 ? 15 : 13;
+      ctx.font = `700 ${basePx}px Inter, system-ui, sans-serif`;
+      drawFittedText(ctx, b.label, b.x + b.w / 2, b.y + b.h / 2 + 1, b.w - 24, basePx, 10);
       ctx.restore();
     } else {
       // original in-game button style
@@ -1753,8 +1853,9 @@ function drawButtons(
       ctx.strokeStyle = primary ? PALETTE.blip : PALETTE.panelEdge;
       ctx.stroke();
       ctx.fillStyle = primary ? PALETTE.blip : PALETTE.text;
-      ctx.font = `700 ${b.h >= 50 ? 15 : 12}px Inter, system-ui, sans-serif`;
-      ctx.fillText(b.label, b.x + b.w / 2, b.y + b.h / 2 + 1);
+      const basePx = b.h >= 50 ? 15 : 12;
+      ctx.font = `700 ${basePx}px Inter, system-ui, sans-serif`;
+      drawFittedText(ctx, b.label, b.x + b.w / 2, b.y + b.h / 2 + 1, b.w - 24, basePx, 10);
     }
   }
 }

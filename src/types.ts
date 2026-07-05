@@ -51,7 +51,6 @@ export interface Aircraft {
   y: number;
   heading: number; // radians; 0 = +x (east), increases clockwise (screen y-down)
   speed: number; // current world px/s
-  speedTarget: 'slow' | 'normal' | 'expedite';
   cruiseSpeed: number;
   turnRate: number; // radians/s
   wake: number; // separation multiplier
@@ -59,7 +58,7 @@ export interface Aircraft {
   fuelSeconds: number;
   emergency: Emergency;
   phase: Phase;
-  waypoints: Vec[]; // approach path being followed: [finalEntry, threshold]
+  waypoints: Vec[]; // approach path being followed: [IAF, finalEntry, threshold]
   assignedRunwayId: number | null;
   assignedEnd: 0 | 1 | null; // landing/takeoff end of the assigned runway
   holdCenter: Vec | null;
@@ -83,7 +82,6 @@ export interface Aircraft {
   py: number;
   ppx: number;
   ppy: number;
-  vectorTarget: number | null;
 }
 
 /** One landable end of a runway (a runway has two — reciprocal directions). */
@@ -153,6 +151,7 @@ export type Grade = 'S' | 'A' | 'B' | 'C' | 'D' | 'F';
 /** Deterministic sim output events, drained by main each frame for audio/fx. */
 export type GameEvent =
   | { kind: 'assign'; x: number; y: number }
+  | { kind: 'corridorBusy'; x: number; y: number; endName: string }
   | { kind: 'dispatch'; x: number; y: number }
   | { kind: 'hold' }
   | { kind: 'unhold' }
@@ -165,10 +164,8 @@ export type GameEvent =
   | { kind: 'groundCrash'; x: number; y: number }
   | { kind: 'takeoffClearance'; x: number; y: number }
   | { kind: 'lineUp'; x: number; y: number }
-  | { kind: 'vector'; heading: number; x: number; y: number }
   | { kind: 'emergency'; emergency: Emergency; callsign: string }
   | { kind: 'crossRunway'; x: number; y: number }
-  | { kind: 'setSpeed'; target: 'slow' | 'normal' | 'expedite'; x: number; y: number }
   | { kind: 'manualHold'; hold: boolean; x: number; y: number }
   | { kind: 'rush' }
   | { kind: 'finalRush' }

@@ -10,27 +10,27 @@ export const CONFIG = {
   airportX: 750,
   airportY: 500,
 
-  // --- runways (three parallel strips to start; each can be landed from EITHER end, so
-  //     there are six approach corridors total; the player picks the side by
-  //     dragging the plane to it). `headingDeg` is the primary end's landing
-  //     travel direction; the reciprocal end is the opposite. ---
-  approachLength: 450, // length of each final-approach corridor (px)
+  // --- runways (two starter strips on day 1 — E/W + N/S — each landable from
+  //     either end; expansion adds angled/crossing strips later). ---
+  approachLength: 280, // length of each final-approach corridor (px)
+  approachIafExtra: 100, // extra leg beyond FAF where planes first join the approach (px)
   runways: [
     { cx: 750, cy: 500, headingDeg: 180, length: 300, side: '' as const },
+    { cx: 750, cy: 500, headingDeg: 90, length: 240, side: '' as const },
   ],
 
   // --- runway expansion slots (purchasable via tech tree) ---
   // Each slot defines a new runway that can be added. They get progressively more
   // angled/crossing, creating intersection complexity.
   runwayExpansionSlots: [
-    // Slot 2: Perpendicular runway (was previously a starting runway)
-    { cx: 750, cy: 500, headingDeg: 90, length: 240, side: '' as const },
-    // Slot 3: slightly angled, crosses runway 2
+    // Slot 1: diagonal (first shop purchase — runway_2)
     { cx: 730, cy: 440, headingDeg: 135, length: 240, side: 'X' as const },
-    // Slot 4: steeper angle, crosses runways 1 and 3
+    // Slot 2: steeper angle, crosses existing strips
     { cx: 770, cy: 580, headingDeg: 225, length: 240, side: 'Y' as const },
-    // Slot 5: perpendicular crosswind runway
+    // Slot 3: offset crosswind strip
     { cx: 690, cy: 520, headingDeg: 90, length: 220, side: 'Z' as const },
+    // Slot 4: parallel overflow strip
+    { cx: 810, cy: 460, headingDeg: 180, length: 200, side: 'W' as const },
   ],
 
   // --- session: a shift is a timed round with an escalating arc + final rush ---
@@ -86,6 +86,13 @@ export const CONFIG = {
   heavyChanceEnd: 0.3,
   emergencyStartAt: 95, // no emergencies during onboarding
   emergencyChanceEnd: 0.14, // per-spawn chance once fully ramped
+  // day-1 onboarding: gentler ramp so first shift reaches mid-game + final rush
+  day1SpawnIntervalStart: 28,
+  day1SpawnIntervalEnd: 7.5,
+  day1RampDurationSeconds: 210,
+  day1EmergencyStartAt: 130,
+  day1MaxAirborneStart: 4,
+  day1RushWaveSize: 2,
   // spawn geometry: early traffic enters from the approach side (east), widening
   // to all directions later; aim points are spread so planes don't all knife
   // into the exact center and self-collide.
@@ -147,6 +154,9 @@ export const CONFIG = {
   planeHitRadius: 24,
   pathSampleDist: 20, // min world-px between sampled drag points
   holdRadius: 120, // orbit radius for holds (must exceed v/turnRate for all types)
+  // Stacked holds: orbit centers must be >= 2*holdRadius + separationMin*maxWake apart.
+  holdStackAngleDeg: 45, // angular step when searching for a free orbit fix
+  holdStackRadius: 90, // extra placement radius per retry slot (concentric stack)
 
   // --- determinism ---
   defaultSeed: 7,
@@ -268,12 +278,25 @@ export function dayDifficulty(day: number): {
   intervalFactor: number;
   rushWaveSize: number;
   gradeTarget: number;
+  spawnIntervalStart: number;
+  spawnIntervalEnd: number;
+  rampDurationSeconds: number;
+  emergencyStartAt: number;
+  maxAirborneStart: number;
 } {
   const d = Math.max(1, day);
+  const onboarding = d === 1;
   return {
     intervalFactor: Math.max(CONFIG.dayIntervalFloor, Math.pow(CONFIG.dayIntervalFactor, d - 1)),
-    rushWaveSize: CONFIG.rushWaveSize + Math.floor((d - 1) / CONFIG.dayRushBonusEvery),
+    rushWaveSize: onboarding
+      ? CONFIG.day1RushWaveSize
+      : CONFIG.rushWaveSize + Math.floor((d - 1) / CONFIG.dayRushBonusEvery),
     gradeTarget: CONFIG.gradeTargetBase + (d - 1) * CONFIG.gradeTargetPerDay,
+    spawnIntervalStart: onboarding ? CONFIG.day1SpawnIntervalStart : CONFIG.spawnIntervalStart,
+    spawnIntervalEnd: onboarding ? CONFIG.day1SpawnIntervalEnd : CONFIG.spawnIntervalEnd,
+    rampDurationSeconds: onboarding ? CONFIG.day1RampDurationSeconds : CONFIG.rampDurationSeconds,
+    emergencyStartAt: onboarding ? CONFIG.day1EmergencyStartAt : CONFIG.emergencyStartAt,
+    maxAirborneStart: onboarding ? CONFIG.day1MaxAirborneStart : CONFIG.maxAirborneStart,
   };
 }
 

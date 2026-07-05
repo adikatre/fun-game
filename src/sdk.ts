@@ -4,6 +4,8 @@ declare global {
   interface Window {
     CrazyGames?: {
       SDK: {
+        /** v3 requires awaiting this before any other module is used. */
+        init(): Promise<void>;
         game: {
           gameplayStart(): void;
           gameplayStop(): void;
@@ -21,6 +23,11 @@ declare global {
   }
 }
 
+// Basic Launch on CrazyGames disables monetization. Keep every ad CTA / gate
+// behind this flag so nothing blocks progression during the 2-week test phase.
+// Flip to `true` only once the game is promoted to Full Launch.
+export const FULL_LAUNCH = false;
+
 export interface PlatformSdk {
   init(): Promise<void>;
   /** Call when active gameplay begins / resumes (CrazyGames midgame ads hook). */
@@ -35,35 +42,54 @@ export interface PlatformSdk {
   requestMidgameAd(onComplete: () => void, onStart: () => void): void;
 }
 
+// True once `window.CrazyGames.SDK.init` has resolved. All SDK calls are no-ops
+// until then so we never throw "CrazySDK is not initialized yet" on boot.
+let initialized = false;
+
+function withGame(fn: (game: NonNullable<Window['CrazyGames']>['SDK']['game']) => void): void {
+  if (!initialized) return;
+  const game = window.CrazyGames?.SDK?.game;
+  if (!game) return;
+  try {
+    fn(game);
+  } catch (err) {
+    // The SDK throws in the `disabled` environment (non-CrazyGames domains).
+    console.warn('CrazyGames SDK call failed:', err);
+  }
+}
+
 export const sdk: PlatformSdk = {
   init: async () => {
-    // SDK v3 initializes automatically via the script tag in index.html.
-  },
-  gameplayStart: () => {
-    if (window.CrazyGames?.SDK?.game) {
-      window.CrazyGames.SDK.game.gameplayStart();
+    const cg = window.CrazyGames?.SDK;
+    if (cg && typeof cg.init === 'function') {
+      try {
+        // v3: must be *called* and awaited; the SDK is unusable until it resolves.
+        await cg.init();
+      } catch (err) {
+        console.warn('CrazyGames SDK init failed:', err);
+      }
     }
+    initialized = true;
   },
-  gameplayStop: () => {
-    if (window.CrazyGames?.SDK?.game) {
-      window.CrazyGames.SDK.game.gameplayStop();
-    }
-  },
-  happytime: () => {
-    if (window.CrazyGames?.SDK?.game) {
-      window.CrazyGames.SDK.game.happytime();
-    }
-  },
+  gameplayStart: () => withGame((game) => game.gameplayStart()),
+  gameplayStop: () => withGame((game) => game.gameplayStop()),
+  happytime: () => withGame((game) => game.happytime()),
   requestRewardedAd: (onSuccess, onError, onStart) => {
-    if (window.CrazyGames?.SDK?.ad) {
-      window.CrazyGames.SDK.ad.requestAd("rewarded", {
-        adStarted: onStart,
-        adFinished: onSuccess,
-        adError: (error, errorData) => {
-          console.warn("Rewarded ad failed:", error, errorData);
-          onError();
-        }
-      });
+    const ad = initialized ? window.CrazyGames?.SDK?.ad : undefined;
+    if (ad) {
+      try {
+        ad.requestAd("rewarded", {
+          adStarted: onStart,
+          adFinished: onSuccess,
+          adError: (error, errorData) => {
+            console.warn("Rewarded ad failed:", error, errorData);
+            onError();
+          }
+        });
+      } catch (err) {
+        console.warn("Rewarded ad request threw:", err);
+        onError();
+      }
     } else {
       // Local development fallback
       onStart();
@@ -75,15 +101,21 @@ export const sdk: PlatformSdk = {
     }
   },
   requestMidgameAd: (onComplete, onStart) => {
-    if (window.CrazyGames?.SDK?.ad) {
-      window.CrazyGames.SDK.ad.requestAd("midgame", {
-        adStarted: onStart,
-        adFinished: onComplete,
-        adError: (error, errorData) => {
-          console.warn("Midgame ad failed:", error, errorData);
-          onComplete(); // proceed anyway if ad fails
-        }
-      });
+    const ad = initialized ? window.CrazyGames?.SDK?.ad : undefined;
+    if (ad) {
+      try {
+        ad.requestAd("midgame", {
+          adStarted: onStart,
+          adFinished: onComplete,
+          adError: (error, errorData) => {
+            console.warn("Midgame ad failed:", error, errorData);
+            onComplete(); // proceed anyway if ad fails
+          }
+        });
+      } catch (err) {
+        console.warn("Midgame ad request threw:", err);
+        onComplete();
+      }
     } else {
       // Local development fallback
       onStart();

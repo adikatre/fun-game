@@ -41,7 +41,7 @@ npm run smoke      # runs real render/input/main against a stubbed DOM (no brows
 | --- | --- |
 | **Drag a plane to a runway side** | If airborne: clear it to land from that end. If it's a **ready (cyan) departure** at a gate: launch it in that direction. Each runway works **both** directions |
 | **Tap a plane, then tap a runway side** | Same, as two taps |
-| **Click an airborne plane** | Opens floating menu: **Slow / Norm / Exp** to adjust speed, or **Abort** to go-around |
+| **Click an airborne plane** | Opens floating menu: **Abort** to go-around |
 | **Click a taxiing plane** | Opens floating menu: **Hold / Go** to manually stop or resume ground taxi |
 | **Right-click / double-tap a plane** | Enter / leave a holding orbit (airborne only) |
 | **Space** | Pause / resume — **you can still clear, dispatch, and hold while paused** |
@@ -62,10 +62,8 @@ auto-clears traffic; `?ff=<seconds>` fast-forwards the sim at load.
 - **Streak economy**: consecutive safe landings/departures multiply pay (up to
   ×2); any near-miss, diversion, or crash resets it.
 - **Line Up & Wait**: Departures now taxi to the runway threshold and hold short. They must be explicitly cleared for takeoff by tapping them, which brings up the Takeoff button. This allows you to position aircraft on the runway for immediate departure when a gap in arrivals occurs.
-- **Radar Vectors**: Arrivals can be given radar vectors to alter their heading in 15-degree increments. Select an arrival and use the 'VEC L' (Left) and 'VEC R' (Right) buttons to sequence them and resolve conflicts.
-- **Advanced Air & Ground Control**: Click planes to open a floating context menu.
-  Command airborne planes to **Slow** or **Expedite** to fine-tune spacing, or
-  order an **Abort** for an immediate go-around. Command taxiing planes to **Hold Short**
+- **Air & Ground Control**: Click planes to open a floating context menu.
+  Order an **Abort** for an immediate go-around on approach. Command taxiing planes to **Hold Short**
   or **Continue Taxi** to resolve ground deadlocks.
 - **Predictive conflict alerts**: closures are projected ~12 s ahead — an amber
   ✕ marks *where* separation will be lost and in how many seconds, before the

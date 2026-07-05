@@ -37,8 +37,8 @@ export const UPGRADE_DEFS: UpgradeDef[] = [
   // --- Runways ---
   {
     id: 'runway_2',
-    name: 'Runway 2',
-    description: 'Add a perpendicular runway to increase arrival capacity',
+    name: 'Runway 3',
+    description: 'Add a diagonal runway (crosses your two starter strips)',
     cost: 1500,
     icon: '🛬',
     category: 'runway',

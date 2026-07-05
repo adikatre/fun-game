@@ -84,6 +84,12 @@ try {
   check('arrivals taxi to gates + turn around + depart', getGame().departed > 0 || getGame().aircraft.some((a: any) => ['taxiIn', 'atGate', 'readyDep', 'taxiOut', 'lineUpWait', 'takeoff', 'departing'].includes(a.phase)));
   check('controller earned salary', true); // Removed strict cash check since it's flaky based on crashes
 
+  // The auto loop may end the shift (fired/debrief); restart so input tests run in playing.
+  if (getGame().status !== 'playing') {
+    fireKey('KeyR');
+    drive(60);
+  }
+
   {
     const s = getGame();
     const ac = s.aircraft.find((a: any) => a.phase === 'inbound');
@@ -97,6 +103,23 @@ try {
       check('drag to the other side assigns end 1 (bidirectional)', e1 === 1);
     } else {
       check('bidirectional landing (no aircraft to test)', true);
+    }
+  }
+
+  {
+    drive(30);
+    const s = getGame();
+    const inbound = s.aircraft.filter((a: any) => a.phase === 'inbound');
+    const rw = s.runways[0];
+    if (inbound.length >= 2) {
+      const [a, b] = inbound;
+      fireDrag({ x: a.x, y: a.y }, { x: rw.ends[0].threshold.x, y: rw.ends[0].threshold.y });
+      check('first plane cleared to approach end 0', getGame().aircraft.find((x: any) => x.id === a.id)?.phase === 'approach');
+      fireDrag({ x: b.x, y: b.y }, { x: rw.ends[0].threshold.x, y: rw.ends[0].threshold.y });
+      const bPhase = getGame().aircraft.find((x: any) => x.id === b.id)?.phase;
+      check('second plane cleared to same corridor (with warning)', bPhase === 'approach');
+    } else {
+      check('corridor busy warning (not enough inbound to test)', true);
     }
   }
 

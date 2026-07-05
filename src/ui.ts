@@ -2,12 +2,12 @@
 // (hit-testing), so the two can never disagree about where a button is.
 
 import type { GameState, Rect, Viewport, Vec } from './types';
+import { FULL_LAUNCH } from './sdk';
 
 export type ButtonId =
   | 'pause' | 'mute' | 'hold' | 'primary' | 'retry' | 'cross' | 'shop_done'
-  | 'speed_slow' | 'speed_normal' | 'speed_expedite' | 'go_around'
+  | 'go_around'
   | 'taxi_hold' | 'taxi_continue' | 'takeoff'
-  | 'vector_left' | 'vector_right' | 'vector_cancel'
   // menu
   | 'menu_play' | 'menu_stats' | 'menu_settings' | 'menu_tutorial'
   // stats
@@ -32,8 +32,6 @@ export interface UiContext {
   selectedWaitCross: boolean; // a ground plane waiting to cross a runway
   selectedTaxi: boolean; // a ground plane taxiing
   selectedTakeoff: boolean; // a plane lined up and waiting for takeoff
-  selectedSpeedTarget?: 'slow' | 'normal' | 'expedite';
-  selectedVectorTarget?: number | null;
   selectedManualHold?: boolean;
   selectedScreenPos?: Vec;
 }
@@ -70,14 +68,15 @@ export function endButtons(vp: Viewport, state: GameState): UiButton[] {
   if (status === 'debrief') {
     btns.push({ id: 'primary', label: 'UPGRADES & NEXT →', x: vp.cssW / 2 - w - 12, y: cy, w, h });
     btns.push({ id: 'retry', label: 'RETRY SHIFT', x: vp.cssW / 2 + 12, y: cy, w, h });
-    if (!state.adDoubleUsed && window.CrazyGames) {
+    // Ads are disabled during Basic Launch, so only surface the CTA in Full Launch.
+    if (FULL_LAUNCH && !state.adDoubleUsed && window.CrazyGames) {
       btns.push({ id: 'ad_double', label: '▶ WATCH AD: DOUBLE $', x: vp.cssW / 2 - w / 2, y: cy + h + 16, w, h });
     }
     return btns;
   }
   
   btns.push({ id: 'retry', label: 'TRY AGAIN', x: vp.cssW / 2 - w / 2, y: cy, w, h });
-  if (!state.adContinueUsed && window.CrazyGames) {
+  if (FULL_LAUNCH && !state.adContinueUsed && window.CrazyGames) {
     btns.push({ id: 'ad_continue', label: '▶ WATCH AD: 2ND CHANCE', x: vp.cssW / 2 - w / 2, y: cy + h + 16, w, h });
   }
   return btns;
@@ -92,18 +91,21 @@ export function upgradeButtons(vp: Viewport): UiButton[] {
   ];
 }
 
-/** Main menu buttons — centered 2x2 grid. */
+/** Main menu buttons — centered 2x2 grid; scales down to fit narrow screens. */
 export function menuButtons(vp: Viewport): UiButton[] {
-  const bw = 220;
+  // Native row width is 2*220 + 20 = 460; shrink proportionally on small screens.
+  const maxRowW = Math.min(vp.cssW - 40, 460);
+  const scale = maxRowW / 460;
+  const bw = 220 * scale;
   const bh = 56;
-  const gap = 20;
+  const gap = 20 * scale;
   const cx = vp.cssW / 2;
   const cy = vp.cssH / 2 + 30;
   return [
     { id: 'menu_play', label: '▶  START SHIFT', x: cx - bw - gap / 2, y: cy, w: bw, h: bh },
     { id: 'menu_stats', label: '📊  STATISTICS', x: cx + gap / 2, y: cy, w: bw, h: bh },
     { id: 'menu_settings', label: '⚙  SETTINGS', x: cx - bw - gap / 2, y: cy + bh + gap, w: bw, h: bh },
-    { id: 'menu_tutorial', label: '❓  HOW TO PLAY', x: cx + gap / 2, y: cy + bh + gap, w: bw, h: bh },
+    { id: 'menu_tutorial', label: '❓  BRIEFING', x: cx + gap / 2, y: cy + bh + gap, w: bw, h: bh },
   ];
 }
 
@@ -126,18 +128,31 @@ export function settingsButtons(vp: Viewport, confirmingReset: boolean): UiButto
   const bh = 48;
   btns.push({ id: 'settings_back', label: '← BACK TO MENU', x: cx - bw / 2, y: vp.cssH - 80, w: bw, h: bh });
 
-  // Mute toggle
-  btns.push({ id: 'settings_mute', label: 'MUTE', x: cx + 140, y: vp.cssH / 2 - 80, w: 70, h: 36 });
+  // Mute toggle — placed below the volume slider, right-aligned inside the
+  // volume card so it never overlaps the percentage readout (mirror of render).
+  const volCardW = Math.min(440, vp.cssW - 24);
+  const volCardX = cx - volCardW / 2;
+  const volCardY = vp.cssH / 2 - 120;
+  const muteW = 90;
+  const muteH = 30;
+  btns.push({
+    id: 'settings_mute',
+    label: 'MUTE',
+    x: volCardX + volCardW - 24 - muteW,
+    y: volCardY + 82,
+    w: muteW,
+    h: muteH,
+  });
 
   // Reset career
   if (confirmingReset) {
-    const rw = 160;
+    const rw = Math.min(160, (vp.cssW - 40) / 2);
     const rh = 44;
     const ry = vp.cssH / 2 + 100;
     btns.push({ id: 'settings_reset_confirm', label: 'YES, RESET', x: cx - rw - 10, y: ry, w: rw, h: rh });
     btns.push({ id: 'settings_reset_cancel', label: 'CANCEL', x: cx + 10, y: ry, w: rw, h: rh });
   } else {
-    const rw = 240;
+    const rw = Math.min(240, vp.cssW - 60);
     const rh = 44;
     btns.push({ id: 'settings_reset', label: '⚠ RESET ALL PROGRESS', x: cx - rw / 2, y: vp.cssH / 2 + 100, w: rw, h: rh });
   }
@@ -148,37 +163,35 @@ export function settingsButtons(vp: Viewport, confirmingReset: boolean): UiButto
 /** Floating context menu next to the selected plane. */
 export function floatingButtons(vp: Viewport, ui: UiContext): UiButton[] {
   if (ui.status !== 'playing' || !ui.selectedScreenPos) return [];
-  const btns: UiButton[] = [];
-  
-  // Position menu above and to the right of the plane
-  let x = ui.selectedScreenPos.x + 30;
-  let y = ui.selectedScreenPos.y - 40;
   const h = 32;
   const pad = 6;
-  
-  const add = (id: UiButton['id'], label: string, w: number) => {
-    btns.push({ id, label, x, y, w, h });
-    x += w + pad;
-  };
 
+  // First gather which buttons to show (id, label, width) so we can measure the
+  // total width and clamp the whole strip inside the viewport before laying out.
+  const specs: { id: UiButton['id']; label: string; w: number }[] = [];
   if (ui.selectedTakeoff) {
-    add('takeoff', 'TAKEOFF', 80);
+    specs.push({ id: 'takeoff', label: 'TAKEOFF', w: 80 });
   } else if (ui.selectedAirborne) {
-    const spd = ui.selectedSpeedTarget;
-    add('speed_slow', spd === 'slow' ? '▶ SLOW' : 'SLOW', 65);
-    add('speed_normal', spd === 'normal' ? '▶ NORM' : 'NORM', 65);
-    add('speed_expedite', spd === 'expedite' ? '▶ EXP' : 'EXP', 65);
-    add('go_around', 'ABORT', 70);
-    add('vector_left', '⬅', 40);
-    add('vector_right', '➡', 40);
-    if (ui.selectedVectorTarget != null) {
-      add('vector_cancel', '✕', 40);
-    }
+    specs.push({ id: 'go_around', label: 'ABORT', w: 70 });
   } else if (ui.selectedTaxi) {
-    add('taxi_hold', ui.selectedManualHold ? '▶ HOLD' : 'HOLD', 65);
-    add('taxi_continue', !ui.selectedManualHold ? '▶ GO' : 'GO', 60);
+    specs.push({ id: 'taxi_hold', label: ui.selectedManualHold ? '▶ HOLD' : 'HOLD', w: 65 });
+    specs.push({ id: 'taxi_continue', label: !ui.selectedManualHold ? '▶ GO' : 'GO', w: 60 });
   }
-  
+  if (specs.length === 0) return [];
+
+  const totalW = specs.reduce((sum, s) => sum + s.w, 0) + pad * (specs.length - 1);
+  const margin = 8;
+  // Prefer up-and-right of the plane, but keep the whole strip on-screen.
+  let x = ui.selectedScreenPos.x + 30;
+  x = Math.max(margin, Math.min(x, vp.cssW - totalW - margin));
+  let y = ui.selectedScreenPos.y - 40;
+  y = Math.max(margin, Math.min(y, vp.cssH - h - margin));
+
+  const btns: UiButton[] = [];
+  for (const s of specs) {
+    btns.push({ id: s.id, label: s.label, x, y, w: s.w, h });
+    x += s.w + pad;
+  }
   return btns;
 }
 

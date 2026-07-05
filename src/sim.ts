@@ -14,6 +14,7 @@ import {
   type GameState,
   type Grade,
   type Runway,
+  type RunwayEnd,
   type Vec,
   type WeatherCell,
 } from './types';
@@ -65,8 +66,8 @@ function runwayNumber(headingDeg: number): string {
 const swapSide = (s: string): string => (s === 'L' ? 'R' : s === 'R' ? 'L' : s);
 
 /**
- * Build all active runways: the 3 base runways from CONFIG.runways, plus
- * any extra expansion runways unlocked by the player's upgrade state.
+ * Build all active runways: base runways from CONFIG.runways, plus any extra
+ * expansion runways unlocked by the player's upgrade state.
  */
 export function buildRunways(upgradeState: UpgradeState): Runway[] {
   const extraCount = extraRunwayCount(upgradeState);
@@ -119,6 +120,8 @@ export function createGame(
     ...CONFIG.gateExpansionSlots.slice(0, extraGates),
   ];
 
+  const diff = dayDifficulty(day);
+
   return {
     time: 0,
     paused: false,
@@ -141,7 +144,7 @@ export function createGame(
     bestStreak: 0,
     spawnAccumulator: 0,
     nextSpawnInterval: CONFIG.firstSpawnAt,
-    nextRushAt: CONFIG.rampDurationSeconds + CONFIG.rushWaveEvery,
+    nextRushAt: diff.rampDurationSeconds + CONFIG.rushWaveEvery,
     totalSpawned: 0,
     finalRushFired: false,
     weatherAccumulator: 0,
@@ -168,9 +171,9 @@ export function restart(
   return createGame(seed, day, briefing, upgradeState);
 }
 
-/** Leave the briefing screen and start the shift. */
+/** Leave the briefing / menu screen and start the shift (QA aids may call from menu). */
 export function startShift(state: GameState): void {
-  if (state.status === 'briefing') state.status = 'playing';
+  if (state.status === 'briefing' || state.status === 'menu') state.status = 'playing';
 }
 
 // ----------------------------------------------------------------------------
@@ -185,20 +188,23 @@ function inFinalRush(state: GameState): boolean {
 function spawnInterval(state: GameState): number {
   const diff = dayDifficulty(state.day);
   let iv =
-    lerp(CONFIG.spawnIntervalStart, CONFIG.spawnIntervalEnd, clamp01(state.time / CONFIG.rampDurationSeconds)) *
+    lerp(diff.spawnIntervalStart, diff.spawnIntervalEnd, clamp01(state.time / diff.rampDurationSeconds)) *
     diff.intervalFactor;
   if (inFinalRush(state)) iv *= CONFIG.finalRushIntervalFactor;
   return iv;
 }
-function maxAirborne(time: number): number {
-  return Math.min(CONFIG.maxAirborneCap, CONFIG.maxAirborneStart + Math.floor(time / CONFIG.maxAirborneGrowEvery));
+function maxAirborne(time: number, day: number): number {
+  const diff = dayDifficulty(day);
+  return Math.min(CONFIG.maxAirborneCap, diff.maxAirborneStart + Math.floor(time / CONFIG.maxAirborneGrowEvery));
 }
-function heavyChance(time: number): number {
-  return lerp(CONFIG.heavyChanceStart, CONFIG.heavyChanceEnd, clamp01(time / CONFIG.rampDurationSeconds));
+function heavyChance(time: number, day: number): number {
+  const ramp = dayDifficulty(day).rampDurationSeconds;
+  return lerp(CONFIG.heavyChanceStart, CONFIG.heavyChanceEnd, clamp01(time / ramp));
 }
-function emergencyChance(time: number): number {
-  if (time < CONFIG.emergencyStartAt) return 0;
-  return lerp(0, CONFIG.emergencyChanceEnd, clamp01((time - CONFIG.emergencyStartAt) / CONFIG.rampDurationSeconds));
+function emergencyChance(time: number, day: number): number {
+  const diff = dayDifficulty(day);
+  if (time < diff.emergencyStartAt) return 0;
+  return lerp(0, CONFIG.emergencyChanceEnd, clamp01((time - diff.emergencyStartAt) / diff.rampDurationSeconds));
 }
 
 function makeAircraft(state: GameState, fuelMult: number): Aircraft {
@@ -207,7 +213,11 @@ function makeAircraft(state: GameState, fuelMult: number): Aircraft {
   // side (east, angle ~0) within a narrow spread; the spread widens to all
   // directions as the shift ramps up.
   const spread = deg(
-    lerp(CONFIG.spawnAngleSpreadStartDeg, CONFIG.spawnAngleSpreadEndDeg, clamp01(state.time / CONFIG.rampDurationSeconds)),
+    lerp(
+      CONFIG.spawnAngleSpreadStartDeg,
+      CONFIG.spawnAngleSpreadEndDeg,
+      clamp01(state.time / dayDifficulty(state.day).rampDurationSeconds),
+    ),
   );
   const ang = (rng.next() - 0.5) * 2 * spread; // centered on east
   const radius = 1000;
@@ -222,14 +232,14 @@ function makeAircraft(state: GameState, fuelMult: number): Aircraft {
   const heading = Math.atan2(aimY - y, aimX - x);
 
   const type: AircraftType =
-    rng.next() < heavyChance(state.time) ? 'heavy' : rng.next() < 0.5 ? 'small' : 'medium';
+    rng.next() < heavyChance(state.time, state.day) ? 'heavy' : rng.next() < 0.5 ? 'small' : 'medium';
   const t = CONFIG.types[type];
   const callsign = `${rng.pick(CALLSIGNS)}${100 + rng.int(899)}`;
 
   let fuel = (CONFIG.fuelSecondsStart + (rng.next() - 0.5) * 2 * CONFIG.fuelVariance) * fuelMult;
   let emergency: Aircraft['emergency'] = 'none';
   const eRoll = rng.next();
-  if (eRoll < emergencyChance(state.time)) {
+  if (eRoll < emergencyChance(state.time, state.day)) {
     if (rng.next() < 0.5) {
       emergency = 'medical';
     } else {
@@ -247,7 +257,6 @@ function makeAircraft(state: GameState, fuelMult: number): Aircraft {
     y,
     heading,
     speed: t.speed,
-    speedTarget: 'normal',
     cruiseSpeed: t.speed,
     turnRate: deg(t.turnRateDeg),
     wake: t.wake,
@@ -276,7 +285,6 @@ function makeAircraft(state: GameState, fuelMult: number): Aircraft {
     py: y,
     ppx: x,
     ppy: y,
-    vectorTarget: null,
   };
 }
 
@@ -296,24 +304,118 @@ const isAirborneArrival = (ac: Aircraft) =>
 const isDispatchable = (ac: Aircraft) =>
   ac.phase === 'readyDep' || ac.phase === 'taxiOut' || ac.phase === 'holdShort';
 
+function maxWake(): number {
+  let w = 0;
+  for (const k of Object.keys(CONFIG.types) as AircraftType[]) {
+    w = Math.max(w, CONFIG.types[k].wake);
+  }
+  return w;
+}
+
+/** Min center-to-center distance so two hold orbits never violate separation. */
+function holdMinCenterSep(): number {
+  return 2 * CONFIG.holdRadius + CONFIG.separationMin * maxWake();
+}
+
+function clampHoldCenter(c: Vec): Vec {
+  const margin = CONFIG.holdRadius + 20;
+  return {
+    x: Math.max(margin, Math.min(CONFIG.worldW - margin, c.x)),
+    y: Math.max(margin, Math.min(CONFIG.worldH - margin, c.y)),
+  };
+}
+
+function defaultHoldCenter(ac: Aircraft): Vec {
+  return {
+    x: ac.x + Math.cos(ac.heading) * CONFIG.holdRadius,
+    y: ac.y + Math.sin(ac.heading) * CONFIG.holdRadius,
+  };
+}
+
+/** Pick an orbit fix that stays separated from every aircraft already holding. */
+function pickHoldCenter(state: GameState, ac: Aircraft): Vec {
+  const minDist = holdMinCenterSep();
+  const existing = state.aircraft
+    .filter((a) => a.id !== ac.id && a.phase === 'holding' && a.holdCenter)
+    .map((a) => a.holdCenter!);
+
+  const farEnough = (c: Vec) => existing.every((e) => dist(c.x, c.y, e.x, e.y) >= minDist);
+
+  const MAX_SLOTS = 16;
+  for (let slot = 0; slot < MAX_SLOTS; slot++) {
+    const angle = ac.heading + deg(slot * CONFIG.holdStackAngleDeg);
+    const radius = CONFIG.holdRadius + slot * CONFIG.holdStackRadius;
+    const candidate = clampHoldCenter({
+      x: ac.x + Math.cos(angle) * radius,
+      y: ac.y + Math.sin(angle) * radius,
+    });
+    if (farEnough(candidate)) return candidate;
+  }
+
+  // Fallback: push away from the nearest existing hold center.
+  if (existing.length > 0) {
+    const def = defaultHoldCenter(ac);
+    let nearest = existing[0];
+    let nd = dist(def.x, def.y, nearest.x, nearest.y);
+    for (const e of existing) {
+      const d = dist(def.x, def.y, e.x, e.y);
+      if (d < nd) {
+        nd = d;
+        nearest = e;
+      }
+    }
+    const away = Math.atan2(def.y - nearest.y, def.x - nearest.x);
+    return clampHoldCenter({
+      x: nearest.x + Math.cos(away) * minDist,
+      y: nearest.y + Math.sin(away) * minDist,
+    });
+  }
+
+  return clampHoldCenter(defaultHoldCenter(ac));
+}
+
+/** How many aircraft are currently on approach to a specific runway end. */
+export function approachCountOnCorridor(
+  state: GameState,
+  runwayId: number,
+  end: 0 | 1,
+  excludeId?: number,
+): number {
+  return state.aircraft.filter(
+    (a) =>
+      a.id !== excludeId &&
+      a.phase === 'approach' &&
+      a.assignedRunwayId === runwayId &&
+      a.assignedEnd === end,
+  ).length;
+}
+
+function buildApproachWaypoints(re: RunwayEnd): Vec[] {
+  const dx = Math.cos(re.dir);
+  const dy = Math.sin(re.dir);
+  const iaf = {
+    x: re.finalEntry.x - dx * CONFIG.approachIafExtra,
+    y: re.finalEntry.y - dy * CONFIG.approachIafExtra,
+  };
+  return [iaf, { ...re.finalEntry }, { ...re.threshold }];
+}
+
 /** Clear a plane to land on a specific END of a runway (the side the player chose). */
 export function assignApproach(state: GameState, aircraftId: number, runwayId: number, end: 0 | 1): boolean {
   const ac = findAircraft(state, aircraftId);
   const rw = findRunway(state, runwayId);
   if (!ac || !rw || !isAirborneArrival(ac)) return false;
   const re = rw.ends[end];
+  const corridorBusy = approachCountOnCorridor(state, runwayId, end, aircraftId) >= 1;
+  if (corridorBusy) {
+    state.events.push({ kind: 'corridorBusy', x: re.threshold.x, y: re.threshold.y, endName: re.name });
+  }
   ac.phase = 'approach';
   ac.assignedRunwayId = rw.id;
   ac.assignedEnd = end;
   ac.holdCenter = null;
-  const dx = Math.cos(re.dir);
-  const dy = Math.sin(re.dir);
-  const iaf = {
-    x: re.finalEntry.x - dx * 350,
-    y: re.finalEntry.y - dy * 350,
-  };
-  ac.waypoints = [iaf, { ...re.finalEntry }, { ...re.threshold }];
-  state.events.push({ kind: 'assign', x: ac.x, y: ac.y });
+  ac.waypoints = buildApproachWaypoints(re);
+  if (!corridorBusy) state.events.push({ kind: 'assign', x: ac.x, y: ac.y });
   return true;
 }
 
@@ -349,10 +451,7 @@ export function toggleHold(state: GameState, aircraftId: number): boolean {
     ac.holdCenter = null;
     state.events.push({ kind: 'unhold' });
   } else {
-    ac.holdCenter = {
-      x: ac.x + Math.cos(ac.heading) * CONFIG.holdRadius,
-      y: ac.y + Math.sin(ac.heading) * CONFIG.holdRadius,
-    };
+    ac.holdCenter = pickHoldCenter(state, ac);
     ac.phase = 'holding';
     ac.assignedRunwayId = null;
     ac.assignedEnd = null;
@@ -391,25 +490,6 @@ export function commandTakeoff(state: GameState, aircraftId: number): boolean {
   ac.landTimer = CONFIG.takeoffRollSeconds;
   rw.occupiedUntil = Math.max(rw.occupiedUntil, state.time + CONFIG.takeoffRollSeconds);
   state.events.push({ kind: 'takeoffClearance', x: ac.x, y: ac.y });
-  return true;
-}
-
-export function commandVector(state: GameState, aircraftId: number, headingOffset: number | null): boolean {
-  const ac = findAircraft(state, aircraftId);
-  if (!ac || !isAirborneArrival(ac)) return false;
-  if (headingOffset === null) {
-    ac.vectorTarget = null;
-  } else {
-    ac.vectorTarget = ac.heading + headingOffset;
-    state.events.push({ kind: 'vector', heading: ac.vectorTarget, x: ac.x, y: ac.y });
-  }
-  return true;
-}
-export function setSpeed(state: GameState, aircraftId: number, target: 'slow' | 'normal' | 'expedite'): boolean {
-  const ac = findAircraft(state, aircraftId);
-  if (!ac || !isAirborneArrival(ac)) return false;
-  ac.speedTarget = target;
-  state.events.push({ kind: 'setSpeed', target, x: ac.x, y: ac.y });
   return true;
 }
 
@@ -466,13 +546,7 @@ function attemptLanding(state: GameState, ac: Aircraft, rw: Runway, end: 0 | 1):
     rw.occupiedUntil = state.time + ac.landTimer;
   } else if (ac.emergency === 'medical') {
     // medical can't go around — re-fly the approach (tight retry)
-    const dx = Math.cos(re.dir);
-    const dy = Math.sin(re.dir);
-    const iaf = {
-      x: re.finalEntry.x - dx * 350,
-      y: re.finalEntry.y - dy * 350,
-    };
-    ac.waypoints = [iaf, { ...re.finalEntry }, { ...re.threshold }];
+    ac.waypoints = buildApproachWaypoints(re);
   } else {
     goAround(state, ac);
   }
@@ -827,10 +901,7 @@ function stepAircraft(state: GameState, ac: Aircraft, dt: number, turnaroundMult
     if (r < CONFIG.holdRadius * 0.85) desired -= 0.4;
     else if (r > CONFIG.holdRadius * 1.15) desired += 0.4;
     ac.heading = turnToward(ac.heading, desired, ac.turnRate * dt);
-    
-    // apply speed targets during holding
-    const ts = ac.speedTarget === 'slow' ? ac.cruiseSpeed * 0.65 : ac.speedTarget === 'expedite' ? ac.cruiseSpeed * 1.35 : ac.cruiseSpeed;
-    ac.speed = lerp(ac.speed, ts, 1.5 * dt);
+    ac.speed = lerp(ac.speed, ac.cruiseSpeed, 1.5 * dt);
   } else if (ac.phase === 'landing') {
     ac.speed = Math.max(CONFIG.taxiSpeed, ac.speed - ac.landDecel * dt);
   } else if (ac.phase === 'departing') {
@@ -849,12 +920,8 @@ function stepAircraft(state: GameState, ac: Aircraft, dt: number, turnaroundMult
   } else if (ac.phase === 'atGate' || ac.phase === 'readyDep' || ac.phase === 'holdShort' || ac.phase === 'lineUpWait') {
     ac.speed = 0;
   } else {
-    // inbound flies straight, seeking speed target
-    if (ac.vectorTarget != null) {
-      ac.heading = turnToward(ac.heading, ac.vectorTarget, ac.turnRate * dt);
-    }
-    const ts = ac.speedTarget === 'slow' ? ac.cruiseSpeed * 0.65 : ac.speedTarget === 'expedite' ? ac.cruiseSpeed * 1.35 : ac.cruiseSpeed;
-    ac.speed = lerp(ac.speed, ts, 1.5 * dt);
+    // inbound flies straight at cruise speed
+    ac.speed = lerp(ac.speed, ac.cruiseSpeed, 1.5 * dt);
   }
 
   // --- advance position ---
@@ -1054,7 +1121,7 @@ export function update(state: GameState, dt: number, upgradeState: UpgradeState 
   state.spawnAccumulator += dt;
   while (state.spawnAccumulator >= state.nextSpawnInterval) {
     state.spawnAccumulator -= state.nextSpawnInterval;
-    if (state.aircraft.length < maxAirborne(state.time)) {
+    if (state.aircraft.length < maxAirborne(state.time, state.day)) {
       state.aircraft.push(makeAircraft(state, fuelMult));
       state.totalSpawned += 1;
     }

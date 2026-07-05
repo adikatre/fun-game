@@ -17,6 +17,17 @@ import { createUpgradeState, loadUpgradeState, saveUpgradeState, purchaseUpgrade
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d', { alpha: false })!;
 
+// Canvas text does not reliably trigger @font-face loading, so eagerly load the
+// Inter weights we render with; otherwise the first frames fall back to system.
+try {
+  const fonts = (document as unknown as { fonts?: FontFaceSet }).fonts;
+  if (fonts) {
+    for (const w of [400, 500, 600, 700, 800, 900]) fonts.load(`${w} 16px Inter`);
+  }
+} catch {
+  /* no-op: canvas falls back to the system font stack */
+}
+
 // --- persistence (best-effort; privacy-friendly, all local) -----------------
 
 function loadNum(key: string, fallback: number): number {
@@ -267,7 +278,10 @@ function runAutoplay(): void {
   }
 }
 
-sdk.init().then(() => sdk.gameplayStart());
+// Initialize the platform SDK but do NOT signal gameplay yet: CrazyGames
+// measures download-to-first-gameplay from the first gameplayStart(), which must
+// fire when the player actually enters a shift (see startShift / newShift).
+sdk.init();
 
 const STEP_FF = 1 / CONFIG.simStepHz;
 // QA aid (?ff=SECONDS): fast-forward the sim at load for screenshots/testing.

@@ -216,6 +216,9 @@ export class AudioEngine {
       case 'goAround':
         this.tone(420, 'sawtooth', 0.05, 0.16, 0, 260);
         break;
+      case 'corridorBusy':
+        this.tone(280, 'sawtooth', 0.08, 0.12);
+        break;
       case 'nearMiss':
         this.tone(300, 'sawtooth', 0.07, 0.12);
         this.tone(300, 'sawtooth', 0.07, 0.12, 0.16);
