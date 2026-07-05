@@ -1,7 +1,7 @@
 // main.ts — wiring + fixed-timestep loop (sim @ 60 Hz; render on rAF with
-// interpolation). Owns the session flow (briefing -> shift -> debrief -> next
-// day), persistence (day / best / mute), and drains the sim's event queue into
-// audio + fx each frame. Decoupling sim from render keeps motion smooth.
+// interpolation). Owns the session flow (menu -> briefing -> shift -> debrief ->
+// next day), persistence (day / best / mute), and drains the sim's event queue
+// into audio + fx each frame. Decoupling sim from render keeps motion smooth.
 
 import { AudioEngine } from './audio';
 import { CONFIG } from './config';
@@ -10,8 +10,9 @@ import { createInput } from './input';
 import { render } from './render';
 import { sdk } from './sdk';
 import { commandToRunway, createGame, startShift, update, authorizeCrossing } from './sim';
+import { loadCareerStats, saveCareerStats, recordShiftStats, createCareerStats, resetAllCareerData } from './stats';
 import type { GameState, Viewport } from './types';
-import { loadUpgradeState, saveUpgradeState, purchaseUpgrade as doPurchase } from './upgrades';
+import { createUpgradeState, loadUpgradeState, saveUpgradeState, purchaseUpgrade as doPurchase } from './upgrades';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d', { alpha: false })!;
@@ -40,6 +41,9 @@ let best = loadNum('fa.best', 0);
 const audio = new AudioEngine(loadNum('fa.muted', 0) === 1);
 const fx = new Fx();
 
+// --- career stats ---
+let careerStats = loadCareerStats();
+
 // --- game state ---------------------------------------------------------------
 
 const seedParam = new URLSearchParams(location.search).get('seed');
@@ -49,7 +53,10 @@ const freshSeed = () => (urlSeed != null ? urlSeed : (Math.random() * 0xffffffff
 let seed = urlSeed ?? CONFIG.defaultSeed;
 let upgradeState = loadUpgradeState();
 let state: GameState = createGame(seed, day, true, upgradeState);
+// Boot to menu instead of briefing
+state.status = 'menu' as any;
 let shiftRecorded = false;
+let isAdPlaying = false;
 
 const viewport: Viewport = { scale: 1, offsetX: 0, offsetY: 0, cssW: 1, cssH: 1 };
 let dpr = 1;
@@ -92,6 +99,10 @@ function recordShift(): void {
   upgradeState.totalCashEarned += state.cash;
   upgradeState.bankBalance += state.cash;
   saveUpgradeState(upgradeState);
+  
+  // Record career stats
+  recordShiftStats(careerStats, state);
+  saveCareerStats(careerStats);
   
   sdk.gameplayStop();
   if (state.status === 'debrief' && (state.grade === 'S' || state.grade === 'A')) sdk.happytime();
@@ -138,6 +149,92 @@ const input = createInput({
     getMuted: () => audio.muted,
     getBest: () => best,
     getUpgrades: () => upgradeState,
+    // --- new actions for menu/stats/settings ---
+    goToMenu: () => {
+      state.status = 'menu' as any;
+    },
+    goToStats: () => {
+      state.status = 'stats' as any;
+    },
+    goToSettings: () => {
+      state.status = 'settings' as any;
+    },
+    goToBriefing: () => {
+      // Create a fresh game for the new shift
+      seed = freshSeed();
+      state = createGame(seed, day, true, upgradeState);
+      shiftRecorded = false;
+      fx.reset(state);
+    },
+    setVolume: (v: number) => {
+      audio.setVolume(v);
+    },
+    getVolume: () => audio.getVolume(),
+    resetCareer: () => {
+      resetAllCareerData();
+      day = 1;
+      save('fa.day', 1);
+      best = 0;
+      save('fa.best', 0);
+      upgradeState = createUpgradeState();
+      saveUpgradeState(upgradeState);
+      careerStats = createCareerStats();
+      saveCareerStats(careerStats);
+      state = createGame(seed, day, true, upgradeState);
+      state.status = 'menu' as any;
+      shiftRecorded = false;
+      fx.reset(state);
+    },
+    getCareerStats: () => careerStats,
+    adContinue: () => {
+      if (isAdPlaying) return;
+      const prevMute = audio.muted;
+      sdk.requestRewardedAd(
+        () => {
+          // Success: reset crash, revive
+          isAdPlaying = false;
+          audio.setMuted(prevMute);
+          state.incidents = Math.max(0, state.incidents - 1); // undo the crash
+          state.adContinueUsed = true;
+          state.status = 'playing'; // resume shift
+          state.crashFx = []; // clear crash markers
+          sdk.gameplayStart();
+        },
+        () => {
+          // Error: resume UI but keep fired
+          isAdPlaying = false;
+          audio.setMuted(prevMute);
+        },
+        () => {
+          // Started: pause game
+          isAdPlaying = true;
+          audio.setMuted(true);
+        }
+      );
+    },
+    adDouble: () => {
+      if (isAdPlaying) return;
+      const prevMute = audio.muted;
+      sdk.requestRewardedAd(
+        () => {
+          // Success: double cash
+          isAdPlaying = false;
+          audio.setMuted(prevMute);
+          state.cash *= 2;
+          state.adDoubleUsed = true;
+        },
+        () => {
+          // Error: resume UI
+          isAdPlaying = false;
+          audio.setMuted(prevMute);
+        },
+        () => {
+          // Started: pause game
+          isAdPlaying = true;
+          audio.setMuted(true);
+        }
+      );
+    },
   },
 });
 
@@ -203,6 +300,12 @@ let last = performance.now();
 let autoTick = 0;
 
 function frame(now: number): void {
+  if (isAdPlaying) {
+    last = now; // prevent delta time from spiraling when ad finishes
+    requestAnimationFrame(frame);
+    return;
+  }
+
   let dt = (now - last) / 1000;
   last = now;
   if (dt > 0.25) dt = 0.25;

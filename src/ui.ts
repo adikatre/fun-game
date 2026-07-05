@@ -3,8 +3,23 @@
 
 import type { GameState, Rect, Viewport, Vec } from './types';
 
+export type ButtonId =
+  | 'pause' | 'mute' | 'hold' | 'primary' | 'retry' | 'cross' | 'shop_done'
+  | 'speed_slow' | 'speed_normal' | 'speed_expedite' | 'go_around'
+  | 'taxi_hold' | 'taxi_continue' | 'takeoff'
+  | 'vector_left' | 'vector_right' | 'vector_cancel'
+  // menu
+  | 'menu_play' | 'menu_stats' | 'menu_settings' | 'menu_tutorial'
+  // stats
+  | 'stats_back'
+  // settings
+  | 'settings_back' | 'settings_reset' | 'settings_reset_confirm' | 'settings_reset_cancel'
+  | 'settings_mute'
+  // ads
+  | 'ad_continue' | 'ad_double';
+
 export interface UiButton extends Rect {
-  id: 'pause' | 'mute' | 'hold' | 'primary' | 'retry' | 'cross' | 'shop_done' | 'speed_slow' | 'speed_normal' | 'speed_expedite' | 'go_around' | 'taxi_hold' | 'taxi_continue' | 'takeoff' | 'vector_left' | 'vector_right' | 'vector_cancel';
+  id: ButtonId;
   label: string;
 }
 
@@ -44,18 +59,28 @@ export function hudButtons(vp: Viewport, ui: UiContext): UiButton[] {
 }
 
 /** End-screen buttons (debrief / fired). */
-export function endButtons(vp: Viewport, status: GameState['status']): UiButton[] {
+export function endButtons(vp: Viewport, state: GameState): UiButton[] {
+  const status = state.status;
   if (status !== 'debrief' && status !== 'fired') return [];
   const w = 220;
   const h = 54;
   const cy = vp.cssH / 2 + 132;
+  const btns: UiButton[] = [];
+
   if (status === 'debrief') {
-    return [
-      { id: 'primary', label: 'UPGRADES & NEXT →', x: vp.cssW / 2 - w - 12, y: cy, w, h },
-      { id: 'retry', label: 'RETRY SHIFT', x: vp.cssW / 2 + 12, y: cy, w, h },
-    ];
+    btns.push({ id: 'primary', label: 'UPGRADES & NEXT →', x: vp.cssW / 2 - w - 12, y: cy, w, h });
+    btns.push({ id: 'retry', label: 'RETRY SHIFT', x: vp.cssW / 2 + 12, y: cy, w, h });
+    if (!state.adDoubleUsed && window.CrazyGames) {
+      btns.push({ id: 'ad_double', label: '▶ WATCH AD: DOUBLE $', x: vp.cssW / 2 - w / 2, y: cy + h + 16, w, h });
+    }
+    return btns;
   }
-  return [{ id: 'retry', label: 'TRY AGAIN', x: vp.cssW / 2 - w / 2, y: cy, w, h }];
+  
+  btns.push({ id: 'retry', label: 'TRY AGAIN', x: vp.cssW / 2 - w / 2, y: cy, w, h });
+  if (!state.adContinueUsed && window.CrazyGames) {
+    btns.push({ id: 'ad_continue', label: '▶ WATCH AD: 2ND CHANCE', x: vp.cssW / 2 - w / 2, y: cy + h + 16, w, h });
+  }
+  return btns;
 }
 
 /** Upgrade screen buttons. */
@@ -65,6 +90,59 @@ export function upgradeButtons(vp: Viewport): UiButton[] {
   return [
     { id: 'shop_done', label: 'START NEXT SHIFT →', x: vp.cssW / 2 - w / 2, y: vp.cssH - 80, w, h },
   ];
+}
+
+/** Main menu buttons — centered 2x2 grid. */
+export function menuButtons(vp: Viewport): UiButton[] {
+  const bw = 220;
+  const bh = 56;
+  const gap = 20;
+  const cx = vp.cssW / 2;
+  const cy = vp.cssH / 2 + 30;
+  return [
+    { id: 'menu_play', label: '▶  START SHIFT', x: cx - bw - gap / 2, y: cy, w: bw, h: bh },
+    { id: 'menu_stats', label: '📊  STATISTICS', x: cx + gap / 2, y: cy, w: bw, h: bh },
+    { id: 'menu_settings', label: '⚙  SETTINGS', x: cx - bw - gap / 2, y: cy + bh + gap, w: bw, h: bh },
+    { id: 'menu_tutorial', label: '❓  HOW TO PLAY', x: cx + gap / 2, y: cy + bh + gap, w: bw, h: bh },
+  ];
+}
+
+/** Stats screen buttons. */
+export function statsButtons(vp: Viewport): UiButton[] {
+  const w = 180;
+  const h = 48;
+  return [
+    { id: 'stats_back', label: '← BACK TO MENU', x: vp.cssW / 2 - w / 2, y: vp.cssH - 80, w, h },
+  ];
+}
+
+/** Settings screen buttons. */
+export function settingsButtons(vp: Viewport, confirmingReset: boolean): UiButton[] {
+  const btns: UiButton[] = [];
+  const cx = vp.cssW / 2;
+
+  // Back button
+  const bw = 180;
+  const bh = 48;
+  btns.push({ id: 'settings_back', label: '← BACK TO MENU', x: cx - bw / 2, y: vp.cssH - 80, w: bw, h: bh });
+
+  // Mute toggle
+  btns.push({ id: 'settings_mute', label: 'MUTE', x: cx + 140, y: vp.cssH / 2 - 80, w: 70, h: 36 });
+
+  // Reset career
+  if (confirmingReset) {
+    const rw = 160;
+    const rh = 44;
+    const ry = vp.cssH / 2 + 100;
+    btns.push({ id: 'settings_reset_confirm', label: 'YES, RESET', x: cx - rw - 10, y: ry, w: rw, h: rh });
+    btns.push({ id: 'settings_reset_cancel', label: 'CANCEL', x: cx + 10, y: ry, w: rw, h: rh });
+  } else {
+    const rw = 240;
+    const rh = 44;
+    btns.push({ id: 'settings_reset', label: '⚠ RESET ALL PROGRESS', x: cx - rw / 2, y: vp.cssH / 2 + 100, w: rw, h: rh });
+  }
+
+  return btns;
 }
 
 /** Floating context menu next to the selected plane. */

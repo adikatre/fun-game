@@ -219,6 +219,50 @@ export const PALETTE = {
   weatherRain: 'rgba(100,120,160,0.5)',
 } as const;
 
+// ---------- Light dashboard palette for menu screens ----------
+// Clean, modern, premium feel that contrasts with the in-game radar scope.
+export const MENU_PALETTE = {
+  bg: '#F8FAFC',
+  bgGrad1: '#EEF2FF',       // subtle gradient start (cool lavender)
+  bgGrad2: '#F8FAFC',       // gradient end (near-white)
+
+  card: '#FFFFFF',
+  cardHover: '#F7FAFF',
+  cardBorder: '#E2E8F0',
+  cardShadow: 'rgba(0,0,0,0.06)',
+  cardShadowHover: 'rgba(74,144,217,0.15)',
+
+  accent: '#4A90D9',        // matches gameplay blue
+  accentLight: 'rgba(74,144,217,0.1)',
+  accentHover: '#3A7BC8',
+
+  success: '#48BB78',
+  successBg: 'rgba(72,187,120,0.1)',
+
+  danger: '#F56565',
+  dangerBg: 'rgba(245,101,101,0.08)',
+
+  text: '#1A202C',
+  textSecondary: '#4A5568',
+  textDim: '#A0AEC0',
+
+  divider: '#E2E8F0',
+  sliderTrack: '#E2E8F0',
+  sliderFill: '#4A90D9',
+  sliderThumb: '#FFFFFF',
+
+  btnPrimary: '#4A90D9',
+  btnPrimaryHover: '#3A7BC8',
+  btnPrimaryText: '#FFFFFF',
+  btnSecondary: '#EDF2F7',
+  btnSecondaryHover: '#E2E8F0',
+  btnSecondaryText: '#4A5568',
+
+  tierHeader: '#F7FAFC',
+  tierBorder: '#E2E8F0',
+  locked: 'rgba(160,174,192,0.4)',
+} as const;
+
 /** Per-day difficulty knobs derived from CONFIG (career progression). */
 export function dayDifficulty(day: number): {
   intervalFactor: number;

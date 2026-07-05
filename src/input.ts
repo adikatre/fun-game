@@ -5,9 +5,10 @@
 // right-click or double-tap = hold; Space = pause; M = mute; R = restart.
 
 import { commandToRunway, toggleHold, setSpeed, commandGoAround, toggleManualHold, commandTakeoff, commandVector } from './sim';
-import type { Aircraft, GameState, RenderHints, Vec, Viewport } from './types';
-import { buttonAt, endButtons, hudButtons, upgradeButtons, floatingButtons, type UiButton, type UiContext } from './ui';
+import type { Aircraft, CareerStats, GameState, RenderHints, Vec, Viewport } from './types';
+import { buttonAt, endButtons, hudButtons, upgradeButtons, floatingButtons, menuButtons, statsButtons, settingsButtons, type UiButton, type UiContext } from './ui';
 import { UPGRADE_DEFS, type UpgradeState } from './upgrades';
+import { sdk } from './sdk';
 
 export interface UiActions {
   startShift(): void; // leave the briefing screen
@@ -24,6 +25,16 @@ export interface UiActions {
   purchaseUpgrade(id: string): void;
   authorizeCross(id: number): void;
   getUpgrades(): UpgradeState;
+  goToMenu(): void;
+  goToStats(): void;
+  goToSettings(): void;
+  goToBriefing(): void;
+  setVolume(v: number): void;
+  getVolume(): number;
+  resetCareer(): void;
+  getCareerStats(): CareerStats;
+  adContinue(): void;
+  adDouble(): void;
 }
 
 export interface InputContext {
@@ -62,6 +73,11 @@ export function createInput(ctx: InputContext): InputController {
   // double-tap detection (touch-friendly hold command)
   let lastTapTime = 0;
   let lastTapPlaneId: number | null = null;
+
+  // new UI state
+  let shopScrollY = 0;
+  let confirmingReset = false;
+  let volumeSliderDragging = false;
 
   const toScreen = (e: { clientX: number; clientY: number }): Vec => {
     const r = canvas.getBoundingClientRect();
@@ -102,9 +118,12 @@ export function createInput(ctx: InputContext): InputController {
   function allButtons(): UiButton[] {
     const state = getState();
     const vp = getViewport();
+    if (state.status === 'menu') return menuButtons(vp);
+    if (state.status === 'stats') return statsButtons(vp);
+    if (state.status === 'settings') return settingsButtons(vp, confirmingReset);
     if (state.status === 'upgrade') return upgradeButtons(vp);
     const uictx = uiCtx();
-    return [...hudButtons(vp, uictx), ...endButtons(vp, state.status), ...floatingButtons(vp, uictx)];
+    return [...hudButtons(vp, uictx), ...endButtons(vp, state), ...floatingButtons(vp, uictx)];
   }
 
   function upgradeAt(sx: number, sy: number): string | null {
@@ -137,6 +156,25 @@ export function createInput(ctx: InputContext): InputController {
     return null;
   }
 
+  /** Volume slider geometry helpers. */
+  function sliderGeom() {
+    const vp = getViewport();
+    const sliderWidth = 300;
+    const sliderLeft = vp.cssW / 2 - 150;
+    const sliderY = vp.cssH / 2 - 80;
+    const sliderH = 36; // hit-test height around the track
+    return { sliderLeft, sliderWidth, sliderY, sliderH };
+  }
+  function volumeFromX(px: number): number {
+    const { sliderLeft, sliderWidth } = sliderGeom();
+    return Math.max(0, Math.min(1, (px - sliderLeft) / sliderWidth));
+  }
+  function isInSlider(sx: number, sy: number): boolean {
+    const { sliderLeft, sliderWidth, sliderY, sliderH } = sliderGeom();
+    return sx >= sliderLeft && sx <= sliderLeft + sliderWidth &&
+           sy >= sliderY - sliderH / 2 && sy <= sliderY + sliderH / 2;
+  }
+
   function pressButton(b: UiButton): void {
     actions.commandFeedback();
     const state = getState();
@@ -157,12 +195,12 @@ export function createInput(ctx: InputContext): InputController {
         if (state.status === 'debrief') {
           actions.showUpgrades();
         } else {
-          actions.nextShift();
+          sdk.requestMidgameAd(() => { actions.nextShift(); }, () => {});
         }
         selectedId = null;
         break;
       case 'shop_done':
-        actions.nextShift();
+        sdk.requestMidgameAd(() => { actions.nextShift(); }, () => {});
         selectedId = null;
         break;
       case 'retry':
@@ -197,6 +235,46 @@ export function createInput(ctx: InputContext): InputController {
       case 'taxi_hold':
       case 'taxi_continue':
         if (selectedId != null) toggleManualHold(state, selectedId);
+        break;
+      // --- new menu/stats/settings buttons ---
+      case 'menu_play':
+        actions.goToBriefing();
+        break;
+      case 'menu_stats':
+        actions.goToStats();
+        break;
+      case 'menu_settings':
+        actions.goToSettings();
+        break;
+      case 'menu_tutorial':
+        // For now, just go to briefing/play
+        actions.goToBriefing();
+        break;
+      case 'stats_back':
+        actions.goToMenu();
+        break;
+      case 'settings_back':
+        confirmingReset = false;
+        actions.goToMenu();
+        break;
+      case 'settings_mute':
+        actions.toggleMute();
+        break;
+      case 'settings_reset':
+        confirmingReset = true;
+        break;
+      case 'settings_reset_confirm':
+        actions.resetCareer();
+        confirmingReset = false;
+        break;
+      case 'settings_reset_cancel':
+        confirmingReset = false;
+        break;
+      case 'ad_continue':
+        actions.adContinue();
+        break;
+      case 'ad_double':
+        actions.adDouble();
         break;
     }
   }
@@ -254,7 +332,27 @@ export function createInput(ctx: InputContext): InputController {
     if ((e as MouseEvent).button === 2) return;
     const state = getState();
 
-    // menu screens: buttons, or anywhere to start
+    // menu screens: only handle buttons (and volume slider for settings)
+    if (state.status === 'menu' || state.status === 'stats') {
+      const b = buttonAt(allButtons(), pointerScreen.x, pointerScreen.y);
+      if (b) pressButton(b);
+      return;
+    }
+
+    if (state.status === 'settings') {
+      // Check volume slider first
+      if (isInSlider(pointerScreen.x, pointerScreen.y)) {
+        volumeSliderDragging = true;
+        const v = volumeFromX(pointerScreen.x);
+        actions.setVolume(v);
+        return;
+      }
+      const b = buttonAt(allButtons(), pointerScreen.x, pointerScreen.y);
+      if (b) pressButton(b);
+      return;
+    }
+
+    // briefing: click anywhere to start
     if (state.status === 'briefing') {
       actions.commandFeedback();
       actions.startShift();
@@ -272,7 +370,7 @@ export function createInput(ctx: InputContext): InputController {
     }
 
     if (state.status === 'debrief' || state.status === 'fired') {
-      const b = buttonAt(allButtons(), pointerScreen.x, pointerScreen.y);
+      const b = buttonAt(endButtons(getViewport(), state), pointerScreen.x, pointerScreen.y);
       if (b) pressButton(b);
       return;
     }
@@ -317,6 +415,14 @@ export function createInput(ctx: InputContext): InputController {
   function onPointerMove(e: PointerEvent | MouseEvent): void {
     pointerScreen = toScreen(e);
     pointerWorld = screenToWorld(pointerScreen);
+
+    // Volume slider dragging
+    if (volumeSliderDragging) {
+      const v = volumeFromX(pointerScreen.x);
+      actions.setVolume(v);
+      return;
+    }
+
     if (downPlaneId != null && downWorld && !dragging) {
       if (Math.hypot(pointerWorld.x - downWorld.x, pointerWorld.y - downWorld.y) > 9) dragging = true;
     }
@@ -326,6 +432,12 @@ export function createInput(ctx: InputContext): InputController {
     pointerScreen = toScreen(e);
     pointerWorld = screenToWorld(pointerScreen);
     if ((e as MouseEvent).button === 2) return;
+
+    // Release volume slider drag
+    if (volumeSliderDragging) {
+      volumeSliderDragging = false;
+      return;
+    }
 
     if (downPlaneId != null) {
       const state = getState();
@@ -351,6 +463,14 @@ export function createInput(ctx: InputContext): InputController {
     if (state.status !== 'playing') return;
     const plane = planeAt(world);
     if (plane) toggleHold(state, plane.id);
+  }
+
+  function onWheel(e: WheelEvent): void {
+    const state = getState();
+    if (state.status === 'upgrade') {
+      shopScrollY -= e.deltaY;
+      shopScrollY = Math.max(0, Math.min(800, shopScrollY));
+    }
   }
 
   // --- keyboard ---
@@ -426,6 +546,10 @@ export function createInput(ctx: InputContext): InputController {
       muted: actions.getMuted(),
       best: actions.getBest(),
       upgrades: actions.getUpgrades(),
+      shopScrollY,
+      confirmingReset,
+      volume: actions.getVolume(),
+      careerStats: actions.getCareerStats(),
     };
   }
 
@@ -433,6 +557,7 @@ export function createInput(ctx: InputContext): InputController {
   window.addEventListener('pointermove', onPointerMove as EventListener);
   window.addEventListener('pointerup', onPointerUp as EventListener);
   canvas.addEventListener('contextmenu', onContextMenu);
+  canvas.addEventListener('wheel', onWheel, { passive: true });
   window.addEventListener('keydown', onKeyDown);
 
   return {
@@ -443,6 +568,7 @@ export function createInput(ctx: InputContext): InputController {
       window.removeEventListener('pointermove', onPointerMove as EventListener);
       window.removeEventListener('pointerup', onPointerUp as EventListener);
       canvas.removeEventListener('contextmenu', onContextMenu);
+      canvas.removeEventListener('wheel', onWheel);
       window.removeEventListener('keydown', onKeyDown);
     },
   };

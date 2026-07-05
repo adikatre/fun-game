@@ -154,6 +154,8 @@ export function createGame(
     nextAircraftId: 1,
     rngSeed: seed,
     rng,
+    adDoubleUsed: false,
+    adContinueUsed: false,
   };
 }
 

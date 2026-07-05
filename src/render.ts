@@ -2,12 +2,12 @@
 // No game logic, no mutation. Aircraft motion is interpolated between sim ticks
 // via `alpha`. `nowSec` is wall-clock time for cosmetic animation.
 
-import { CONFIG, PALETTE, dayDifficulty } from './config';
+import { CONFIG, PALETTE, MENU_PALETTE, dayDifficulty } from './config';
 import type { Fx } from './fx';
 import { AIRBORNE_PHASES } from './types';
-import type { Aircraft, GameState, RenderHints, Runway, Viewport, Vec } from './types';
+import type { Aircraft, CareerStats, GameState, RenderHints, Runway, Viewport, Vec } from './types';
 import { UPGRADE_DEFS, isUnlocked, canPurchase } from './upgrades';
-import { endButtons, hudButtons, upgradeButtons, floatingButtons, type UiButton, type UiContext } from './ui';
+import { endButtons, hudButtons, upgradeButtons, menuButtons, statsButtons, settingsButtons, floatingButtons, type UiButton, type UiContext } from './ui';
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
@@ -56,8 +56,11 @@ function uiContext(state: GameState, hints: RenderHints, vp: Viewport, alpha: nu
 /** All buttons currently on screen (render + input share this). */
 export function visibleButtons(state: GameState, vp: Viewport, hints: RenderHints, alpha: number = 1): UiButton[] {
   if (state.status === 'upgrade') return upgradeButtons(vp);
+  if (state.status === 'menu') return menuButtons(vp);
+  if (state.status === 'stats') return statsButtons(vp);
+  if (state.status === 'settings') return settingsButtons(vp, (hints as any).confirmingReset ?? false);
   const uictx = uiContext(state, hints, vp, alpha);
-  return [...hudButtons(vp, uictx), ...endButtons(vp, state.status), ...floatingButtons(vp, uictx)];
+  return [...hudButtons(vp, uictx), ...endButtons(vp, state), ...floatingButtons(vp, uictx)];
 }
 
 // ----------------------------------------------------------------------------
@@ -123,6 +126,9 @@ export function render(
   else if (state.status === 'debrief') drawDebrief(ctx, state, vp, hints, nowSec);
   else if (state.status === 'fired') drawFired(ctx, state, vp, hints, nowSec);
   else if (state.status === 'upgrade') drawUpgradeScreen(ctx, state, vp, hints, nowSec);
+  else if (state.status === 'menu') drawMainMenu(ctx, state, vp, hints, nowSec);
+  else if (state.status === 'stats') drawStatsScreen(ctx, vp, hints, nowSec);
+  else if (state.status === 'settings') drawSettingsScreen(ctx, vp, hints, nowSec);
 
   drawButtons(ctx, state, vp, hints, alpha);
 }
@@ -1112,139 +1118,570 @@ function drawFired(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewport
 }
 
 // ----------------------------------------------------------------------------
-// Upgrade / shop screen
+// Upgrade / shop screen — scrollable tiered list
 // ----------------------------------------------------------------------------
 
+const TIER_DEFS: { label: string; ids: string[] }[] = [
+  { label: 'TIER 1 — STARTER UPGRADES', ids: ['runway_2', 'gates_1', 'radar_range_1', 'fuel_reserves', 'fast_turnaround_1'] },
+  { label: 'TIER 2 — ADVANCED', ids: ['runway_3', 'gates_2', 'radar_range_2', 'fast_turnaround_2', 'weather_radar'] },
+  { label: 'TIER 3 — EXPANSION', ids: ['runway_4', 'gates_3'] },
+  { label: 'TIER 4 — ULTIMATE', ids: ['runway_5'] },
+];
+
 function drawUpgradeScreen(ctx: CanvasRenderingContext2D, _state: GameState, vp: Viewport, hints: RenderHints, nowSec: number): void {
-  ctx.fillStyle = PALETTE.bgAlt;
+  // MENU_PALETTE light background
+  const grad = ctx.createLinearGradient(0, 0, 0, vp.cssH);
+  grad.addColorStop(0, MENU_PALETTE.bgGrad1);
+  grad.addColorStop(1, MENU_PALETTE.bgGrad2);
+  ctx.fillStyle = grad;
   ctx.fillRect(0, 0, vp.cssW, vp.cssH);
 
   const cx = vp.cssW / 2;
   const ups = hints.upgrades;
+  const scrollY = (hints as any).shopScrollY ?? 0;
 
-  // title
+  const headerH = 110;
+  const bottomBarH = 90;
+
+  // ── Sticky header ──
+  ctx.save();
+  ctx.shadowColor = MENU_PALETTE.cardShadow;
+  ctx.shadowBlur = 12;
+  ctx.shadowOffsetY = 4;
+  roundRectPath(ctx, 0, 0, vp.cssW, headerH, 0);
+  ctx.fillStyle = MENU_PALETTE.card;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+  // bottom divider
+  ctx.strokeStyle = MENU_PALETTE.divider;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, headerH);
+  ctx.lineTo(vp.cssW, headerH);
+  ctx.stroke();
+  ctx.restore();
+
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
-  ctx.fillStyle = PALETTE.text;
-  ctx.font = '900 32px Inter, system-ui, sans-serif';
-  ctx.fillText('AIRPORT UPGRADES', cx, 50);
+  ctx.fillStyle = MENU_PALETTE.text;
+  ctx.font = '900 28px Inter, system-ui, sans-serif';
+  ctx.fillText('AIRPORT UPGRADES', cx, 42);
 
-  // bank balance
-  ctx.fillStyle = PALETTE.cash;
-  ctx.font = '800 22px Inter, system-ui, sans-serif';
-  ctx.fillText(`Bank: $${ups.bankBalance}`, cx, 82);
-  ctx.fillStyle = PALETTE.textDim;
+  // bank
+  ctx.fillStyle = MENU_PALETTE.accent;
+  ctx.font = '800 24px Inter, system-ui, sans-serif';
+  ctx.fillText(`Bank: $${ups.bankBalance.toLocaleString()}`, cx, 74);
+  ctx.fillStyle = MENU_PALETTE.textDim;
   ctx.font = '500 12px Inter, system-ui, sans-serif';
-  ctx.fillText('Spend your earnings to improve the airport', cx, 100);
+  ctx.fillText('Spend your earnings to improve the airport', cx, 96);
 
-  // upgrade cards in a grid
-  const cardW = 200;
-  const cardH = 110;
-  const gap = 16;
-  const cols = Math.min(4, Math.floor((vp.cssW - 40) / (cardW + gap)));
-  const totalW = cols * cardW + (cols - 1) * gap;
-  const startX = cx - totalW / 2;
-  let gridY = 120;
+  // ── Scrollable content area ──
+  const contentTop = headerH;
+  const contentBottom = vp.cssH - bottomBarH;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, contentTop, vp.cssW, contentBottom - contentTop);
+  ctx.clip();
 
-  // Group by category
-  const categories = ['runway', 'gates', 'weather', 'radar', 'fuel', 'turnaround'] as const;
-  const catNames: Record<string, string> = {
-    runway: '✈ RUNWAYS', gates: '🏢 GATES', weather: '🌧 WEATHER',
-    radar: '📡 RADAR', fuel: '⛽ FUEL', turnaround: '⚡ SPEED',
-  };
+  const cardW = Math.min(560, vp.cssW - 60);
+  const cardH = 68;
+  const cardGap = 10;
+  const tierGap = 18;
+  const tierHeaderH = 40;
+  let yy = contentTop + 20 - scrollY;
 
-  let col = 0;
+  for (let ti = 0; ti < TIER_DEFS.length; ti++) {
+    const tier = TIER_DEFS[ti];
+    // check if all items in previous tiers are purchased (prerequisites)
+    const tierLocked = ti > 0 && TIER_DEFS.slice(0, ti).some(prev =>
+      prev.ids.some(id => !ups.purchased.has(id as any))
+    );
 
-  for (const cat of categories) {
-    const catDefs = UPGRADE_DEFS.filter((d) => d.category === cat);
-    if (catDefs.length === 0) continue;
+    // tier header bar
+    const thY = yy;
+    ctx.save();
+    if (tierLocked) ctx.globalAlpha = 0.45;
+    roundRectPath(ctx, cx - cardW / 2, thY, cardW, tierHeaderH, 8);
+    ctx.fillStyle = MENU_PALETTE.tierHeader;
+    ctx.fill();
+    ctx.strokeStyle = MENU_PALETTE.tierBorder;
+    ctx.lineWidth = 1;
+    ctx.stroke();
 
-    for (const def of catDefs) {
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = MENU_PALETTE.textSecondary;
+    ctx.font = '700 13px Inter, system-ui, sans-serif';
+    ctx.fillText(tierLocked ? `🔒 ${tier.label}` : tier.label, cx - cardW / 2 + 16, thY + tierHeaderH / 2);
+    if (tierLocked) ctx.restore();
+    yy += tierHeaderH + cardGap;
+
+    for (const id of tier.ids) {
+      const def = UPGRADE_DEFS.find(d => d.id === id);
+      if (!def) continue;
+
       const purchased = ups.purchased.has(def.id);
       const unlocked = isUnlocked(ups, def.id);
       const affordable = canPurchase(ups, def.id);
       const hovered = hints.hoverUpgradeId === def.id;
 
-      const cardX = startX + col * (cardW + gap);
-      const cardY = gridY;
+      const cardX = cx - cardW / 2;
+      const cardY = yy;
 
-      // card background
       ctx.save();
-      if (hovered && !purchased) {
-        ctx.shadowColor = 'rgba(74,144,217,0.3)';
-        ctx.shadowBlur = 12;
+      if (tierLocked) ctx.globalAlpha = 0.35;
+
+      // card shadow
+      if (hovered && !purchased && !tierLocked) {
+        ctx.shadowColor = MENU_PALETTE.cardShadowHover;
+        ctx.shadowBlur = 14;
         ctx.shadowOffsetY = 4;
       } else {
-        ctx.shadowColor = PALETTE.panelShadow;
+        ctx.shadowColor = MENU_PALETTE.cardShadow;
         ctx.shadowBlur = 6;
-        ctx.shadowOffsetY = 3;
+        ctx.shadowOffsetY = 2;
       }
       roundRectPath(ctx, cardX, cardY, cardW, cardH, 10);
-      ctx.fillStyle = purchased ? 'rgba(90,192,107,0.12)' : !unlocked ? 'rgba(200,210,220,0.5)' : 'rgba(255,255,255,0.92)';
+      ctx.fillStyle = purchased
+        ? MENU_PALETTE.successBg
+        : hovered && !tierLocked
+          ? MENU_PALETTE.cardHover
+          : MENU_PALETTE.card;
       ctx.fill();
       ctx.shadowBlur = 0;
       ctx.shadowOffsetY = 0;
 
       ctx.lineWidth = purchased ? 2 : 1;
-      ctx.strokeStyle = purchased ? PALETTE.gateReady : affordable ? PALETTE.blip : PALETTE.panelEdge;
+      ctx.strokeStyle = purchased ? MENU_PALETTE.success : affordable ? MENU_PALETTE.accent : MENU_PALETTE.cardBorder;
       ctx.stroke();
-      ctx.restore();
 
-      // icon
+      // icon (left)
       ctx.font = '28px Inter, system-ui, sans-serif';
-      ctx.textAlign = 'left';
+      ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(def.icon, cardX + 12, cardY + 28);
+      ctx.fillText(def.icon, cardX + 32, cardY + cardH / 2);
 
-      // name
-      ctx.font = '700 13px Inter, system-ui, sans-serif';
-      ctx.fillStyle = purchased ? PALETTE.gateReady : !unlocked ? PALETTE.textDim : PALETTE.text;
-      ctx.fillText(def.name, cardX + 48, cardY + 24);
+      // name + description (middle)
+      ctx.textAlign = 'left';
+      ctx.font = '700 14px Inter, system-ui, sans-serif';
+      ctx.fillStyle = purchased ? MENU_PALETTE.success : !unlocked || tierLocked ? MENU_PALETTE.textDim : MENU_PALETTE.text;
+      ctx.fillText(def.name, cardX + 60, cardY + 24);
+      ctx.font = '400 11.5px Inter, system-ui, sans-serif';
+      ctx.fillStyle = MENU_PALETTE.textDim;
+      ctx.fillText(def.description, cardX + 60, cardY + 44);
 
-      // description
-      ctx.font = '400 10.5px Inter, system-ui, sans-serif';
-      ctx.fillStyle = PALETTE.textDim;
-      // wrap text
-      const words = def.description.split(' ');
-      let line = '';
-      let ly = cardY + 44;
-      for (const word of words) {
-        const test = line + (line ? ' ' : '') + word;
-        if (ctx.measureText(test).width > cardW - 56) {
-          ctx.fillText(line, cardX + 48, ly);
-          line = word;
-          ly += 13;
-        } else {
-          line = test;
-        }
-      }
-      if (line) ctx.fillText(line, cardX + 48, ly);
-
-      // price / status
+      // status (right)
       ctx.textAlign = 'right';
-      ctx.textBaseline = 'bottom';
+      ctx.textBaseline = 'middle';
       if (purchased) {
-        ctx.fillStyle = PALETTE.gateReady;
-        ctx.font = '700 12px Inter, system-ui, sans-serif';
-        ctx.fillText('✓ OWNED', cardX + cardW - 12, cardY + cardH - 10);
-      } else if (!unlocked) {
-        ctx.fillStyle = PALETTE.textDim;
-        ctx.font = '500 11px Inter, system-ui, sans-serif';
-        ctx.fillText('🔒 LOCKED', cardX + cardW - 12, cardY + cardH - 10);
+        ctx.fillStyle = MENU_PALETTE.success;
+        ctx.font = '700 14px Inter, system-ui, sans-serif';
+        ctx.fillText('✓ OWNED', cardX + cardW - 18, cardY + cardH / 2);
+      } else if (!unlocked || tierLocked) {
+        ctx.fillStyle = MENU_PALETTE.textDim;
+        ctx.font = '500 12px Inter, system-ui, sans-serif';
+        ctx.fillText('🔒 LOCKED', cardX + cardW - 18, cardY + cardH / 2);
       } else {
-        ctx.fillStyle = affordable ? PALETTE.cash : PALETTE.danger;
-        ctx.font = '800 14px Inter, system-ui, sans-serif';
-        ctx.fillText(`$${def.cost}`, cardX + cardW - 12, cardY + cardH - 10);
+        ctx.fillStyle = affordable ? MENU_PALETTE.success : MENU_PALETTE.danger;
+        ctx.font = '800 16px Inter, system-ui, sans-serif';
+        ctx.fillText(`$${def.cost.toLocaleString()}`, cardX + cardW - 18, cardY + cardH / 2);
       }
 
-      col++;
-      if (col >= cols) {
-        col = 0;
-        gridY += cardH + gap;
-      }
+      ctx.restore();
+      yy += cardH + cardGap;
+    }
+    yy += tierGap;
+  }
+
+  ctx.restore(); // end clip
+  void nowSec;
+}
+
+// ----------------------------------------------------------------------------
+// Main menu / title screen
+// ----------------------------------------------------------------------------
+
+function drawMainMenu(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewport, hints: RenderHints, nowSec: number): void {
+  // ── full-screen gradient background ──
+  const bg = ctx.createLinearGradient(0, 0, 0, vp.cssH);
+  bg.addColorStop(0, MENU_PALETTE.bgGrad1);
+  bg.addColorStop(1, MENU_PALETTE.bgGrad2);
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, vp.cssW, vp.cssH);
+
+  // ── decorative drifting planes ──
+  ctx.save();
+  ctx.globalAlpha = 0.06;
+  ctx.font = '32px Inter, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const planes = ['✈', '🛩', '✈', '🛩', '✈'];
+  for (let i = 0; i < planes.length; i++) {
+    const speed = 18 + i * 7;
+    const yOff = 60 + i * (vp.cssH - 120) / planes.length;
+    const xPos = ((nowSec * speed + i * 400) % (vp.cssW + 200)) - 100;
+    ctx.save();
+    ctx.translate(xPos, yOff);
+    ctx.rotate(-0.15 + i * 0.06);
+    ctx.fillStyle = MENU_PALETTE.accent;
+    ctx.fillText(planes[i], 0, 0);
+    ctx.restore();
+  }
+  ctx.restore();
+
+  // ── subtle dots grid pattern ──
+  ctx.save();
+  ctx.globalAlpha = 0.04;
+  ctx.fillStyle = MENU_PALETTE.accent;
+  for (let gx = 30; gx < vp.cssW; gx += 40) {
+    for (let gy = 30; gy < vp.cssH; gy += 40) {
+      ctx.beginPath();
+      ctx.arc(gx, gy, 1.5, 0, Math.PI * 2);
+      ctx.fill();
     }
   }
-  void catNames;
+  ctx.restore();
+
+  const cx = vp.cssW / 2;
+  const cy = vp.cssH / 2;
+
+  // ── main card panel ──
+  const cardW = 540;
+  const cardH = 380;
+  const cardX = cx - cardW / 2;
+  const cardY = cy - cardH / 2 - 10;
+
+  ctx.save();
+  ctx.shadowColor = 'rgba(74,144,217,0.12)';
+  ctx.shadowBlur = 40;
+  ctx.shadowOffsetY = 12;
+  roundRectPath(ctx, cardX, cardY, cardW, cardH, 20);
+  ctx.fillStyle = MENU_PALETTE.card;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = MENU_PALETTE.cardBorder;
+  ctx.stroke();
+  ctx.restore();
+
+  // ── title ──
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = MENU_PALETTE.accent;
+  ctx.font = '900 52px Inter, system-ui, sans-serif';
+  ctx.fillText('FINAL APPROACH', cx, cardY + 72);
+
+  // ── subtitle ──
+  ctx.fillStyle = MENU_PALETTE.textSecondary;
+  ctx.font = '500 16px Inter, system-ui, sans-serif';
+  ctx.fillText('you are the tower', cx, cardY + 100);
+
+  // ── divider line ──
+  ctx.strokeStyle = MENU_PALETTE.divider;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx - 100, cardY + 118);
+  ctx.lineTo(cx + 100, cardY + 118);
+  ctx.stroke();
+
+  // ── day + bank ──
+  const day = state.day ?? 1;
+  const bank = hints.upgrades?.bankBalance ?? 0;
+  ctx.fillStyle = MENU_PALETTE.textSecondary;
+  ctx.font = '600 14px Inter, system-ui, sans-serif';
+  ctx.fillText(`Day ${day}  ·  Bank: $${bank.toLocaleString()}`, cx, cardY + 142);
+
+  // ── pulsing CTA below buttons area ──
+  const pulse = 0.55 + 0.45 * Math.sin(nowSec * 2.5);
+  ctx.globalAlpha = pulse;
+  ctx.fillStyle = MENU_PALETTE.textDim;
+  ctx.font = '500 12px Inter, system-ui, sans-serif';
+  ctx.fillText('manage your airport, land every plane', cx, cardY + cardH - 24);
+  ctx.globalAlpha = 1;
+}
+
+// ----------------------------------------------------------------------------
+// Stats screen
+// ----------------------------------------------------------------------------
+
+function drawStatsScreen(ctx: CanvasRenderingContext2D, vp: Viewport, hints: RenderHints, nowSec: number): void {
+  // background
+  const bg = ctx.createLinearGradient(0, 0, 0, vp.cssH);
+  bg.addColorStop(0, MENU_PALETTE.bgGrad1);
+  bg.addColorStop(1, MENU_PALETTE.bgGrad2);
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, vp.cssW, vp.cssH);
+
+  const cx = vp.cssW / 2;
+  const stats: CareerStats = (hints as any).careerStats ?? {
+    totalShifts: 0, totalLandings: 0, totalDepartures: 0,
+    bestCash: 0, bestStreak: 0, totalCrashes: 0,
+    lifetimeEarnings: 0, grades: { S: 0, A: 0, B: 0, C: 0, D: 0, F: 0 },
+  };
+
+  // title
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = MENU_PALETTE.accent;
+  ctx.font = '900 36px Inter, system-ui, sans-serif';
+  ctx.fillText('CAREER STATISTICS', cx, 56);
+  ctx.strokeStyle = MENU_PALETTE.divider;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx - 120, 72);
+  ctx.lineTo(cx + 120, 72);
+  ctx.stroke();
+
+  // stat cards: 2 cols × 4 rows
+  const cw = 230;
+  const ch = 90;
+  const gap = 16;
+  const gridW = cw * 2 + gap;
+  const sx = cx - gridW / 2;
+  let sy = 92;
+
+  const cardItems: { icon: string; label: string; value: string; color?: string }[] = [
+    { icon: '✈', label: 'Total Shifts', value: `${stats.totalShifts}` },
+    { icon: '🛬', label: 'Total Landings', value: `${stats.totalLandings}` },
+    { icon: '🛫', label: 'Total Departures', value: `${stats.totalDepartures}` },
+    { icon: '💰', label: 'Lifetime Earnings', value: `$${stats.lifetimeEarnings.toLocaleString()}` },
+    { icon: '🏆', label: 'Best Cash', value: `$${stats.bestCash.toLocaleString()}` },
+    { icon: '🔥', label: 'Best Streak', value: `×${stats.bestStreak}` },
+    { icon: '💥', label: 'Total Crashes', value: `${stats.totalCrashes}`, color: stats.totalCrashes > 0 ? MENU_PALETTE.danger : undefined },
+  ];
+
+  for (let i = 0; i < cardItems.length; i++) {
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    const x = sx + col * (cw + gap);
+    const y = sy + row * (ch + gap);
+    const item = cardItems[i];
+
+    // card
+    ctx.save();
+    ctx.shadowColor = MENU_PALETTE.cardShadow;
+    ctx.shadowBlur = 8;
+    ctx.shadowOffsetY = 3;
+    roundRectPath(ctx, x, y, cw, ch, 12);
+    ctx.fillStyle = MENU_PALETTE.card;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = MENU_PALETTE.cardBorder;
+    ctx.stroke();
+    ctx.restore();
+
+    // icon
+    ctx.font = '26px Inter, system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(item.icon, x + 14, y + ch / 2 - 4);
+
+    // label
+    ctx.font = '500 11px Inter, system-ui, sans-serif';
+    ctx.fillStyle = MENU_PALETTE.textDim;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText(item.label.toUpperCase(), x + 50, y + 30);
+
+    // value
+    ctx.font = '800 24px Inter, system-ui, sans-serif';
+    ctx.fillStyle = item.color ?? MENU_PALETTE.text;
+    ctx.fillText(item.value, x + 50, y + 62);
+  }
+
+  // grade breakdown card (8th card, col=1 row=3)
+  {
+    const x = sx + 1 * (cw + gap);
+    const y = sy + 3 * (ch + gap);
+
+    ctx.save();
+    ctx.shadowColor = MENU_PALETTE.cardShadow;
+    ctx.shadowBlur = 8;
+    ctx.shadowOffsetY = 3;
+    roundRectPath(ctx, x, y, cw, ch, 12);
+    ctx.fillStyle = MENU_PALETTE.card;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = MENU_PALETTE.cardBorder;
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.font = '500 11px Inter, system-ui, sans-serif';
+    ctx.fillStyle = MENU_PALETTE.textDim;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillText('GRADE BREAKDOWN', x + 14, y + 24);
+
+    // grade badges
+    const grades: (keyof typeof GRADE_COLOR)[] = ['S', 'A', 'B', 'C', 'D', 'F'];
+    const bw = 32;
+    const bGap = 4;
+    const totalBw = grades.length * bw + (grades.length - 1) * bGap;
+    let bx = x + (cw - totalBw) / 2;
+    const by = y + 48;
+    for (const g of grades) {
+      const gc = GRADE_COLOR[g] ?? MENU_PALETTE.textDim;
+      const count = stats.grades[g as keyof typeof stats.grades] ?? 0;
+      roundRectPath(ctx, bx, by, bw, 28, 6);
+      ctx.fillStyle = gc;
+      ctx.globalAlpha = count > 0 ? 0.18 : 0.06;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = gc;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = '700 11px Inter, system-ui, sans-serif';
+      ctx.fillStyle = gc;
+      ctx.fillText(`${g}:${count}`, bx + bw / 2, by + 14);
+      bx += bw + bGap;
+    }
+  }
+  void nowSec;
+}
+
+// ----------------------------------------------------------------------------
+// Settings screen
+// ----------------------------------------------------------------------------
+
+function drawSettingsScreen(ctx: CanvasRenderingContext2D, vp: Viewport, hints: RenderHints, nowSec: number): void {
+  // background
+  const bg = ctx.createLinearGradient(0, 0, 0, vp.cssH);
+  bg.addColorStop(0, MENU_PALETTE.bgGrad1);
+  bg.addColorStop(1, MENU_PALETTE.bgGrad2);
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, vp.cssW, vp.cssH);
+
+  const cx = vp.cssW / 2;
+  const volume = (hints as any).volume ?? 1;
+  const confirmingReset = (hints as any).confirmingReset ?? false;
+
+  // title
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = MENU_PALETTE.accent;
+  ctx.font = '900 36px Inter, system-ui, sans-serif';
+  ctx.fillText('SETTINGS', cx, 56);
+  ctx.strokeStyle = MENU_PALETTE.divider;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx - 80, 72);
+  ctx.lineTo(cx + 80, 72);
+  ctx.stroke();
+
+  // ── Volume section card ──
+  const volCardW = 440;
+  const volCardH = 120;
+  const volCardX = cx - volCardW / 2;
+  const volCardY = vp.cssH / 2 - 120;
+
+  ctx.save();
+  ctx.shadowColor = MENU_PALETTE.cardShadow;
+  ctx.shadowBlur = 10;
+  ctx.shadowOffsetY = 4;
+  roundRectPath(ctx, volCardX, volCardY, volCardW, volCardH, 14);
+  ctx.fillStyle = MENU_PALETTE.card;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = MENU_PALETTE.cardBorder;
+  ctx.stroke();
+  ctx.restore();
+
+  // volume label
+  ctx.textAlign = 'left';
+  ctx.fillStyle = MENU_PALETTE.textSecondary;
+  ctx.font = '700 12px Inter, system-ui, sans-serif';
+  ctx.fillText('MASTER VOLUME', volCardX + 24, volCardY + 32);
+
+  // slider track
+  const trackW = 300;
+  const trackH = 8;
+  const trackX = volCardX + 24;
+  const trackY = volCardY + 60;
+
+  // track background
+  roundRectPath(ctx, trackX, trackY, trackW, trackH, 4);
+  ctx.fillStyle = MENU_PALETTE.sliderTrack;
+  ctx.fill();
+
+  // filled portion
+  const fillW = trackW * Math.max(0, Math.min(1, volume));
+  if (fillW > 0) {
+    roundRectPath(ctx, trackX, trackY, fillW, trackH, 4);
+    ctx.fillStyle = MENU_PALETTE.sliderFill;
+    ctx.fill();
+  }
+
+  // thumb
+  const thumbX = trackX + fillW;
+  const thumbY = trackY + trackH / 2;
+  const thumbR = 10;
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,0.15)';
+  ctx.shadowBlur = 6;
+  ctx.shadowOffsetY = 2;
+  ctx.beginPath();
+  ctx.arc(thumbX, thumbY, thumbR, 0, Math.PI * 2);
+  ctx.fillStyle = MENU_PALETTE.sliderThumb;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = MENU_PALETTE.sliderFill;
+  ctx.stroke();
+  ctx.restore();
+
+  // percentage label
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = MENU_PALETTE.text;
+  ctx.font = '700 14px Inter, system-ui, sans-serif';
+  ctx.fillText(`${Math.round(volume * 100)}%`, trackX + trackW + 16, trackY + trackH / 2);
+
+  // ── Danger zone section ──
+  const dzCardW = 440;
+  const dzCardH = confirmingReset ? 140 : 100;
+  const dzCardX = cx - dzCardW / 2;
+  const dzCardY = vp.cssH / 2 + 30;
+
+  ctx.save();
+  ctx.shadowColor = MENU_PALETTE.cardShadow;
+  ctx.shadowBlur = 10;
+  ctx.shadowOffsetY = 4;
+  roundRectPath(ctx, dzCardX, dzCardY, dzCardW, dzCardH, 14);
+  ctx.fillStyle = MENU_PALETTE.card;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = MENU_PALETTE.danger;
+  ctx.globalAlpha = 0.4;
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  // danger zone header
+  ctx.textAlign = 'left';
+  ctx.fillStyle = MENU_PALETTE.danger;
+  ctx.font = '700 13px Inter, system-ui, sans-serif';
+  ctx.fillText('⚠ DANGER ZONE', dzCardX + 24, dzCardY + 30);
+
+  if (confirmingReset) {
+    ctx.textAlign = 'center';
+    ctx.fillStyle = MENU_PALETTE.danger;
+    ctx.font = '600 14px Inter, system-ui, sans-serif';
+    ctx.fillText('Are you sure? This cannot be undone.', cx, dzCardY + 60);
+    // confirm/cancel buttons drawn by drawButtons
+  }
   void nowSec;
 }
 
@@ -1256,32 +1693,68 @@ function drawButtons(
   alpha: number = 1,
 ): void {
   const btns = visibleButtons(state, vp, hints, alpha);
+  const isMenuScreen = state.status === 'menu' || state.status === 'stats' || state.status === 'settings' || state.status === 'upgrade';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   for (const b of btns) {
     const hovered = hints.hoverButtonId === b.id;
-    const primary = b.id === 'primary' || b.id === 'shop_done';
 
-    // shadow
-    ctx.shadowColor = PALETTE.panelShadow;
-    ctx.shadowBlur = 6;
-    ctx.shadowOffsetY = 3;
-    roundRectPath(ctx, b.x, b.y, b.w, b.h, 10);
-    ctx.fillStyle = primary
-      ? hovered
-        ? 'rgba(74,144,217,0.25)'
-        : 'rgba(74,144,217,0.15)'
-      : hovered
-        ? 'rgba(255,255,255,0.95)'
-        : PALETTE.panel;
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.shadowOffsetY = 0;
-    ctx.lineWidth = hovered ? 2 : 1.5;
-    ctx.strokeStyle = primary ? PALETTE.blip : PALETTE.panelEdge;
-    ctx.stroke();
-    ctx.fillStyle = primary ? PALETTE.blip : PALETTE.text;
-    ctx.font = `700 ${b.h >= 50 ? 15 : 12}px Inter, system-ui, sans-serif`;
-    ctx.fillText(b.label, b.x + b.w / 2, b.y + b.h / 2 + 1);
+    if (isMenuScreen) {
+      // premium MENU_PALETTE styled buttons
+      const isPrimary = b.id === 'menu_play' || b.id === 'shop_done';
+      const isDanger = b.id === 'settings_reset' || b.id === 'settings_reset_confirm';
+
+      ctx.save();
+      ctx.shadowColor = hovered ? MENU_PALETTE.cardShadowHover : MENU_PALETTE.cardShadow;
+      ctx.shadowBlur = hovered ? 14 : 8;
+      ctx.shadowOffsetY = hovered ? 5 : 3;
+      roundRectPath(ctx, b.x, b.y, b.w, b.h, 12);
+
+      if (isPrimary) {
+        ctx.fillStyle = hovered ? MENU_PALETTE.btnPrimaryHover : MENU_PALETTE.btnPrimary;
+      } else if (isDanger) {
+        ctx.fillStyle = hovered ? '#E53E3E' : MENU_PALETTE.danger;
+      } else {
+        ctx.fillStyle = hovered ? MENU_PALETTE.btnSecondaryHover : MENU_PALETTE.btnSecondary;
+      }
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
+
+      if (!isPrimary && !isDanger) {
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = MENU_PALETTE.cardBorder;
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = isPrimary || isDanger ? MENU_PALETTE.btnPrimaryText : MENU_PALETTE.btnSecondaryText;
+      ctx.font = `700 ${b.h >= 50 ? 15 : 13}px Inter, system-ui, sans-serif`;
+      ctx.fillText(b.label, b.x + b.w / 2, b.y + b.h / 2 + 1);
+      ctx.restore();
+    } else {
+      // original in-game button style
+      const primary = b.id === 'primary' || b.id === 'shop_done';
+
+      ctx.shadowColor = PALETTE.panelShadow;
+      ctx.shadowBlur = 6;
+      ctx.shadowOffsetY = 3;
+      roundRectPath(ctx, b.x, b.y, b.w, b.h, 10);
+      ctx.fillStyle = primary
+        ? hovered
+          ? 'rgba(74,144,217,0.25)'
+          : 'rgba(74,144,217,0.15)'
+        : hovered
+          ? 'rgba(255,255,255,0.95)'
+          : PALETTE.panel;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
+      ctx.lineWidth = hovered ? 2 : 1.5;
+      ctx.strokeStyle = primary ? PALETTE.blip : PALETTE.panelEdge;
+      ctx.stroke();
+      ctx.fillStyle = primary ? PALETTE.blip : PALETTE.text;
+      ctx.font = `700 ${b.h >= 50 ? 15 : 12}px Inter, system-ui, sans-serif`;
+      ctx.fillText(b.label, b.x + b.w / 2, b.y + b.h / 2 + 1);
+    }
   }
 }

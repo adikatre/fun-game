@@ -124,13 +124,29 @@ export interface WeatherCell {
 }
 
 /**
+ * menu      — main menu / title screen (game boots here)
  * briefing  — start screen; sim is frozen until the player begins the shift
  * playing   — the shift is live
  * debrief   — the shift timer ran out; grade + stats screen
  * fired     — two crashes; failure screen
  * upgrade   — between shifts; tech tree / shop screen
+ * stats     — career statistics dashboard
+ * settings  — audio / reset settings screen
+ * tutorial  — interactive how-to-play tutorial mission
  */
-export type GameStatus = 'briefing' | 'playing' | 'debrief' | 'fired' | 'upgrade';
+export type GameStatus = 'menu' | 'briefing' | 'playing' | 'debrief' | 'fired' | 'upgrade' | 'stats' | 'settings' | 'tutorial';
+
+/** Lifetime career statistics, persisted across shifts. */
+export interface CareerStats {
+  totalShifts: number;
+  totalLandings: number;
+  totalDepartures: number;
+  bestCash: number;
+  bestStreak: number;
+  totalCrashes: number;
+  lifetimeEarnings: number;
+  grades: Record<Grade, number>;
+}
 
 export type Grade = 'S' | 'A' | 'B' | 'C' | 'D' | 'F';
 
@@ -222,6 +238,9 @@ export interface GameState {
 
   rngSeed: number;
   rng: Rng;
+
+  adDoubleUsed: boolean;
+  adContinueUsed: boolean;
 }
 
 /** Read-only viewport transform shared by render + input (world <-> screen). */
@@ -263,4 +282,8 @@ export interface RenderHints {
   muted: boolean;
   best: number;
   upgrades: UpgradeState;
+  shopScrollY?: number;
+  confirmingReset?: boolean;
+  volume?: number;
+  careerStats?: CareerStats;
 }

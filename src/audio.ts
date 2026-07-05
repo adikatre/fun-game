@@ -18,9 +18,17 @@ export class AudioEngine {
   private alarmOsc: OscillatorNode | null = null;
   private lastPing = 0;
   muted: boolean;
+  private volume: number; // 0.0–1.0 master volume
 
   constructor(muted = false) {
     this.muted = muted;
+    // Load persisted volume (default 1.0)
+    let vol = 1.0;
+    try {
+      const v = globalThis.localStorage?.getItem('fa.volume');
+      if (v != null) { const n = Number(v); if (Number.isFinite(n)) vol = Math.max(0, Math.min(1, n)); }
+    } catch { /* ignore */ }
+    this.volume = vol;
   }
 
   /** Call from a user gesture. Creates/resumes the context and ambience. */
@@ -31,7 +39,7 @@ export class AudioEngine {
       try {
         this.ctx = new Ctor();
         this.master = this.ctx.createGain();
-        this.master.gain.value = this.muted ? 0 : 1;
+        this.master.gain.value = this.muted ? 0 : this.volume;
         this.master.connect(this.ctx.destination);
         this.startAmbient();
         this.startAlarmLoop();
@@ -43,15 +51,32 @@ export class AudioEngine {
     if (this.ctx.state === 'suspended') void this.ctx.resume();
   }
 
+  private applyGain(): void {
+    if (this.ctx && this.master) {
+      const target = this.muted ? 0 : this.volume;
+      this.master.gain.setTargetAtTime(target, this.ctx.currentTime, 0.02);
+    }
+  }
+
   setMuted(m: boolean): void {
     this.muted = m;
-    if (this.ctx && this.master) {
-      this.master.gain.setTargetAtTime(m ? 0 : 1, this.ctx.currentTime, 0.02);
-    }
+    this.applyGain();
   }
   toggleMuted(): boolean {
     this.setMuted(!this.muted);
     return this.muted;
+  }
+
+  /** Set master volume (0.0–1.0) and persist. */
+  setVolume(v: number): void {
+    this.volume = Math.max(0, Math.min(1, v));
+    this.applyGain();
+    try { globalThis.localStorage?.setItem('fa.volume', String(this.volume)); } catch { /* ignore */ }
+  }
+
+  /** Get current master volume (0.0–1.0). */
+  getVolume(): number {
+    return this.volume;
   }
 
   // --- building blocks -------------------------------------------------------
