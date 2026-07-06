@@ -37,8 +37,8 @@ try {
   for (let i = 0; i < 120; i++) {
     const s = getGame();
     if (s.status !== 'playing') break;
-    const wc = s.aircraft.find((a: any) => a.phase === 'waitCross');
-    if (wc) {
+    const wcs = s.aircraft.filter((a: any) => a.phase === 'waitCross');
+    for (const wc of wcs) {
       fireClick({ x: wc.x, y: wc.y });
       fireScreenClick({ x: 1280 - 130, y: 800 - 138 }); // click authorize cross
     }

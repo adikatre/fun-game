@@ -12,7 +12,7 @@ export const CONFIG = {
 
   // --- runways (two starter strips on day 1 — E/W + N/S — each landable from
   //     either end; expansion adds angled/crossing strips later). ---
-  approachLength: 280, // length of each final-approach corridor (px)
+  approachLength: 210, // length of each final-approach corridor (px)
   approachIafExtra: 100, // extra leg beyond FAF where planes first join the approach (px)
   runways: [
     { cx: 750, cy: 500, headingDeg: 180, length: 300, side: '' as const },
