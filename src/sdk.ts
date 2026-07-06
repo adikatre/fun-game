@@ -9,7 +9,16 @@ declare global {
         game: {
           gameplayStart(): void;
           gameplayStop(): void;
+          loadingStart(): void;
+          loadingStop(): void;
           happytime(): void;
+        };
+        /** localStorage-like store; syncs to the player's cloud save when logged in. */
+        data: {
+          getItem(key: string): string | null;
+          setItem(key: string, value: string): void;
+          removeItem(key: string): void;
+          clear(): void;
         };
         ad: {
           requestAd(type: 'rewarded' | 'midgame', callbacks: {
@@ -34,6 +43,10 @@ export interface PlatformSdk {
   gameplayStart(): void;
   /** Call when gameplay pauses / a menu opens. */
   gameplayStop(): void;
+  /** Call when the game starts loading resources (mandatory CrazyGames event). */
+  loadingStart(): void;
+  /** Call once loading is done and the game is ready to play (mandatory). */
+  loadingStop(): void;
   /** Call on a positive beat (e.g. a delivery milestone). */
   happytime(): void;
   /** Request a rewarded video ad. */
@@ -73,6 +86,8 @@ export const sdk: PlatformSdk = {
   },
   gameplayStart: () => withGame((game) => game.gameplayStart()),
   gameplayStop: () => withGame((game) => game.gameplayStop()),
+  loadingStart: () => withGame((game) => game.loadingStart()),
+  loadingStop: () => withGame((game) => game.loadingStop()),
   happytime: () => withGame((game) => game.happytime()),
   requestRewardedAd: (onSuccess, onError, onStart) => {
     const ad = initialized ? window.CrazyGames?.SDK?.ad : undefined;
@@ -126,4 +141,53 @@ export const sdk: PlatformSdk = {
       }, 500);
     }
   }
+};
+
+// --- persistence -------------------------------------------------------------
+// CrazyGames wants all saves to go through SDK.data (it mirrors the localStorage
+// API and cloud-syncs for logged-in players). It is only usable after init()
+// resolves, so callers must load persisted state after `await sdk.init()`.
+// Outside CrazyGames (or if a call throws) we fall back to plain localStorage.
+
+function sdkData(): NonNullable<Window['CrazyGames']>['SDK']['data'] | undefined {
+  return initialized ? window.CrazyGames?.SDK?.data : undefined;
+}
+
+export const storage = {
+  getItem(key: string): string | null {
+    const data = sdkData();
+    if (data) {
+      try {
+        return data.getItem(key);
+      } catch { /* disabled environment */ }
+    }
+    try {
+      return globalThis.localStorage?.getItem(key) ?? null;
+    } catch {
+      return null;
+    }
+  },
+  setItem(key: string, value: string): void {
+    const data = sdkData();
+    if (data) {
+      try {
+        data.setItem(key, value);
+        return;
+      } catch { /* disabled environment */ }
+    }
+    try {
+      globalThis.localStorage?.setItem(key, value);
+    } catch { /* private mode etc. */ }
+  },
+  removeItem(key: string): void {
+    const data = sdkData();
+    if (data) {
+      try {
+        data.removeItem(key);
+      } catch { /* disabled environment */ }
+    }
+    try {
+      globalThis.localStorage?.removeItem(key);
+    } catch { /* private mode etc. */ }
+  },
 };

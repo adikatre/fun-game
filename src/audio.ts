@@ -2,6 +2,7 @@
 // Zero asset files (stays a single-file build). Safe under Node/headless: every
 // entry point no-ops until a real AudioContext exists and the user has gestured.
 
+import { storage } from './sdk';
 import type { GameEvent } from './types';
 import { MusicDirector, type MusicScene } from './music';
 import { AmbienceDirector } from './ambience';
@@ -19,7 +20,7 @@ type Ctor = typeof AudioContext;
 
 function loadVolume(key: string): number {
   try {
-    const v = globalThis.localStorage?.getItem(key);
+    const v = storage.getItem(key);
     if (v != null) {
       const n = Number(v);
       if (Number.isFinite(n)) return Math.max(0, Math.min(1, n));
@@ -107,7 +108,7 @@ export class AudioEngine {
   setVolume(v: number): void {
     this.volume = Math.max(0, Math.min(1, v));
     this.applyGain();
-    try { globalThis.localStorage?.setItem('fa.volume', String(this.volume)); } catch { /* ignore */ }
+    storage.setItem('fa.volume', String(this.volume));
   }
 
   /** Get current master volume (0.0–1.0). */
@@ -118,7 +119,7 @@ export class AudioEngine {
   setMusicVolume(v: number): void {
     this.musicVolume = Math.max(0, Math.min(1, v));
     if (this.ctx && this.musicGroup) this.musicGroup.gain.setTargetAtTime(this.musicVolume, this.ctx.currentTime, 0.02);
-    try { globalThis.localStorage?.setItem('fa.musicVolume', String(this.musicVolume)); } catch { /* ignore */ }
+    storage.setItem('fa.musicVolume', String(this.musicVolume));
   }
   getMusicVolume(): number {
     return this.musicVolume;
@@ -127,7 +128,7 @@ export class AudioEngine {
   setSfxVolume(v: number): void {
     this.sfxVolume = Math.max(0, Math.min(1, v));
     if (this.ctx && this.sfxGroup) this.sfxGroup.gain.setTargetAtTime(this.sfxVolume, this.ctx.currentTime, 0.02);
-    try { globalThis.localStorage?.setItem('fa.sfxVolume', String(this.sfxVolume)); } catch { /* ignore */ }
+    storage.setItem('fa.sfxVolume', String(this.sfxVolume));
   }
   getSfxVolume(): number {
     return this.sfxVolume;

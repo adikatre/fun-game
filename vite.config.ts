@@ -8,7 +8,9 @@ export default defineConfig({
   base: './',
   plugins: [viteSingleFile()],
   build: {
-    target: 'es2020',
+    // es2022 for top-level await (boot blocks on CrazyGames SDK init before
+    // reading cloud saves). Fine for CrazyGames' browser matrix (Chrome/Edge).
+    target: 'es2022',
     cssCodeSplit: false,
     assetsInlineLimit: 100_000_000,
     chunkSizeWarningLimit: 100_000,

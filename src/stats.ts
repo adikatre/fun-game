@@ -1,6 +1,7 @@
 // stats.ts — career statistics persistence.
 // Tracks lifetime stats across shifts, persisted to localStorage.
 
+import { storage } from './sdk';
 import type { CareerStats, GameState } from './types';
 
 const STORAGE_KEY = 'fa.career';
@@ -36,14 +37,14 @@ export function recordShiftStats(stats: CareerStats, state: GameState): void {
 /** Save career stats to localStorage. */
 export function saveCareerStats(stats: CareerStats): void {
   try {
-    globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(stats));
+    storage.setItem(STORAGE_KEY, JSON.stringify(stats));
   } catch { /* private mode etc */ }
 }
 
 /** Load career stats from localStorage. */
 export function loadCareerStats(): CareerStats {
   try {
-    const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
+    const raw = storage.getItem(STORAGE_KEY);
     if (!raw) return createCareerStats();
     const data = JSON.parse(raw);
     return {
@@ -71,10 +72,10 @@ export function loadCareerStats(): CareerStats {
 /** Wipe all career stats (for Settings reset). */
 export function resetAllCareerData(): void {
   try {
-    globalThis.localStorage?.removeItem(STORAGE_KEY);
-    globalThis.localStorage?.removeItem('fa.day');
-    globalThis.localStorage?.removeItem('fa.best');
-    globalThis.localStorage?.removeItem('fa.upgrades');
-    globalThis.localStorage?.removeItem('fa.volume');
+    storage.removeItem(STORAGE_KEY);
+    storage.removeItem('fa.day');
+    storage.removeItem('fa.best');
+    storage.removeItem('fa.upgrades');
+    storage.removeItem('fa.volume');
   } catch { /* ignore */ }
 }

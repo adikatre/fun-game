@@ -8,7 +8,7 @@ import { CONFIG } from './config';
 import { Fx } from './fx';
 import { createInput } from './input';
 import { render } from './render';
-import { sdk } from './sdk';
+import { sdk, storage } from './sdk';
 import { commandToRunway, createGame, startShift, update, authorizeCrossing } from './sim';
 import { loadCareerStats, saveCareerStats, recordShiftStats, createCareerStats, resetAllCareerData } from './stats';
 import type { GameState, Viewport } from './types';
@@ -28,23 +28,21 @@ try {
   /* no-op: canvas falls back to the system font stack */
 }
 
-// --- persistence (best-effort; privacy-friendly, all local) -----------------
+// --- persistence -------------------------------------------------------------
+// Saves go through the CrazyGames data module (cloud save for logged-in players,
+// localStorage otherwise), which is only usable after init() resolves — so boot
+// blocks on it before reading any persisted state.
+
+await sdk.init();
+sdk.loadingStart();
 
 function loadNum(key: string, fallback: number): number {
-  try {
-    const v = globalThis.localStorage?.getItem(key);
-    const n = v == null ? NaN : Number(v);
-    return Number.isFinite(n) ? n : fallback;
-  } catch {
-    return fallback;
-  }
+  const v = storage.getItem(key);
+  const n = v == null ? NaN : Number(v);
+  return Number.isFinite(n) ? n : fallback;
 }
 function save(key: string, value: number | string): void {
-  try {
-    globalThis.localStorage?.setItem(key, String(value));
-  } catch {
-    /* private mode etc. */
-  }
+  storage.setItem(key, String(value));
 }
 
 let day = Math.max(1, Math.floor(loadNum('fa.day', 1)));
@@ -286,11 +284,6 @@ function runAutoplay(): void {
   }
 }
 
-// Initialize the platform SDK but do NOT signal gameplay yet: CrazyGames
-// measures download-to-first-gameplay from the first gameplayStart(), which must
-// fire when the player actually enters a shift (see startShift / newShift).
-sdk.init();
-
 const STEP_FF = 1 / CONFIG.simStepHz;
 // QA aid (?ff=SECONDS): fast-forward the sim at load for screenshots/testing.
 {
@@ -374,4 +367,7 @@ function frame(now: number): void {
 
   requestAnimationFrame(frame);
 }
+// Boot is done (single-file bundle: nothing left to fetch) — tell CrazyGames
+// before the first frame renders the menu.
+sdk.loadingStop();
 requestAnimationFrame(frame);

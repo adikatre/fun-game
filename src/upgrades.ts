@@ -2,6 +2,8 @@
 // Players spend earned cash to permanently improve their airport.
 // Upgrades persist across shifts via localStorage.
 
+import { storage } from './sdk';
+
 export type UpgradeId =
   | 'runway_2'
   | 'runway_3'
@@ -248,13 +250,13 @@ export function saveUpgradeState(state: UpgradeState): void {
       totalCashEarned: state.totalCashEarned,
       bankBalance: state.bankBalance,
     };
-    globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(data));
+    storage.setItem(STORAGE_KEY, JSON.stringify(data));
   } catch { /* private mode etc */ }
 }
 
 export function loadUpgradeState(): UpgradeState {
   try {
-    const raw = globalThis.localStorage?.getItem(STORAGE_KEY);
+    const raw = storage.getItem(STORAGE_KEY);
     if (!raw) return createUpgradeState();
     const data = JSON.parse(raw);
     return {
