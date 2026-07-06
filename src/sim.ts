@@ -506,7 +506,7 @@ export function commandGoAround(state: GameState, aircraftId: number): boolean {
   const ac = findAircraft(state, aircraftId);
   if (!ac || (ac.phase !== 'approach' && ac.phase !== 'landing')) return false;
   // If we're already decelerating hard on the runway, we might not be able to abort, but we allow it for now.
-  goAround(state, ac);
+  goAround(state, ac, false);
   return true;
 }
 
@@ -530,14 +530,15 @@ function commandedCruiseSpeed(ac: Aircraft): number {
 // per-aircraft movement
 // ----------------------------------------------------------------------------
 
-function goAround(state: GameState, ac: Aircraft): void {
+function goAround(state: GameState, ac: Aircraft, penalize = true): void {
   ac.phase = 'inbound';
   ac.assignedRunwayId = null;
   ac.assignedEnd = null;
   ac.waypoints = [];
   state.goArounds += 1;
-  state.cash -= CONFIG.goAroundPenalty;
-  state.events.push({ kind: 'goAround', amount: -CONFIG.goAroundPenalty, x: ac.x, y: ac.y });
+  const amount = penalize ? -CONFIG.goAroundPenalty : 0;
+  if (penalize) state.cash -= CONFIG.goAroundPenalty;
+  state.events.push({ kind: 'goAround', amount, x: ac.x, y: ac.y });
 }
 
 function attemptLanding(state: GameState, ac: Aircraft, rw: Runway, end: 0 | 1): void {

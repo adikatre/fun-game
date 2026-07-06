@@ -49,7 +49,7 @@ export class Fx {
         this.pop(e.x, e.y - 14, `+$${e.amount}`, PALETTE.departure, e.streak >= 4 ? 18 : 15);
         break;
       case 'goAround':
-        this.pop(e.x, e.y - 14, `GO-AROUND ${e.amount}`, PALETTE.warn, 12);
+        this.pop(e.x, e.y - 14, e.amount ? `GO-AROUND ${e.amount}` : 'GO-AROUND', PALETTE.warn, 12);
         break;
       case 'corridorBusy':
         this.pop(e.x, e.y - 14, `CORRIDOR BUSY — ${e.endName}`, PALETTE.warn, 12, 1.2);

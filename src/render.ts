@@ -95,13 +95,11 @@ export function render(
 
   // world layers
   drawTerrainHints(ctx);
-  drawRangeRings(ctx);
   drawWeather(ctx, state, nowSec);
   for (const rw of state.runways) drawRunway(ctx, rw, state, hints, nowSec);
   drawGates(ctx, state);
   drawSelectedPath(ctx, state, hints);
   drawDragPreview(ctx, state, hints);
-  for (const ac of state.aircraft) drawTrailAndVector(ctx, ac, alpha);
   drawPredicted(ctx, state, alpha, nowSec);
   for (const ac of state.aircraft) drawAircraft(ctx, ac, alpha, state, hints, nowSec);
   drawConflicts(ctx, state, alpha, nowSec);
@@ -169,20 +167,6 @@ function drawTerrainHints(ctx: CanvasRenderingContext2D): void {
     roundRectPath(ctx, b[0], b[1], b[2], b[3], 4);
     ctx.fill();
   }
-}
-
-function drawRangeRings(ctx: CanvasRenderingContext2D): void {
-  const cx = CONFIG.airportX;
-  const cy = CONFIG.airportY;
-  ctx.save();
-  ctx.strokeStyle = PALETTE.ring;
-  ctx.lineWidth = 1;
-  for (const r of [160, 320, 480, 640]) {
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-  ctx.restore();
 }
 
 function drawWeather(ctx: CanvasRenderingContext2D, state: GameState, nowSec: number): void {
@@ -448,29 +432,6 @@ function drawGates(ctx: CanvasRenderingContext2D, state: GameState): void {
       ctx.stroke();
     }
   }
-}
-
-function drawTrailAndVector(ctx: CanvasRenderingContext2D, ac: Aircraft, alpha: number): void {
-  if (!AIRBORNE_PHASES.includes(ac.phase)) return;
-
-  // trail dots
-  for (let i = 0; i < ac.trail.length; i++) {
-    const a = (i / ac.trail.length) * 0.45;
-    ctx.fillStyle = `rgba(74,144,217,${a.toFixed(3)})`;
-    ctx.beginPath();
-    ctx.arc(ac.trail[i].x, ac.trail[i].y, 1.8, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  // heading vector
-  const x = lerp(ac.ppx, ac.px, alpha);
-  const y = lerp(ac.ppy, ac.py, alpha);
-  const L = ac.speed * 1.7;
-  ctx.strokeStyle = 'rgba(74,144,217,0.25)';
-  ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  ctx.moveTo(x, y);
-  ctx.lineTo(x + Math.cos(ac.heading) * L, y + Math.sin(ac.heading) * L);
-  ctx.stroke();
 }
 
 function drawPredicted(ctx: CanvasRenderingContext2D, state: GameState, alpha: number, nowSec: number): void {
