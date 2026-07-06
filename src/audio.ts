@@ -283,8 +283,10 @@ export class AudioEngine {
       case 'goAround':
         this.tone(420, 'sawtooth', 0.05, 0.16, 0, 260);
         break;
-      case 'corridorBusy':
-        this.tone(280, 'sawtooth', 0.08, 0.12);
+      case 'corridorBusy': // still a valid clearance, so use the same "cleared to land" chirp as assign
+        this.tone(520, 'square', 0.05, 0.06);
+        this.tone(760, 'square', 0.05, 0.08, 0.07);
+        this.noise(0.02, 0.1, 2400, 0.02);
         break;
       case 'nearMiss':
         this.tone(300, 'sawtooth', 0.07, 0.12);
