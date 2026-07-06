@@ -152,15 +152,20 @@ try {
   check('restart reset handled to 0', getGame().handled === 0);
   check('restart reset time to ~0', getGame().time < 1);
 
-  drive(22000); // drive for 6+ minutes to finish the shift
+  drive(11000); // drive for 3+ minutes to finish the shift
   console.log('DEBUG game status:', getGame().status, 'time:', getGame().time, 'cash:', getGame().cash, 'handled:', getGame().handled, 'incidents:', getGame().incidents);
   check('survived the run without throwing', true);
   check('shift timer ends in debrief or fired', getGame().status === 'debrief' || getGame().status === 'fired');
   check('a grade was assigned', typeof getGame().grade === 'string');
 
-  // get past tutorial/debriefing to start day 2
-  fireScreenClick({ x: 1280 / 2, y: 532 });
-  check('TRY AGAIN restarts the day', getGame().status === 'playing' || getGame().status === 'upgrade');
+  // debrief: left button is UPGRADES & NEXT; fired: TRY AGAIN is centered
+  const endStatus = getGame().status;
+  if (endStatus === 'debrief') {
+    fireScreenClick({ x: 1280 / 2 - 220 - 12 + 110, y: 800 / 2 + 132 + 27 });
+  } else {
+    fireScreenClick({ x: 1280 / 2, y: 800 / 2 + 132 + 27 });
+  }
+  check('end screen advances (upgrade or retry)', getGame().status === 'playing' || getGame().status === 'upgrade');
 } catch (e: any) {
   console.error('\nERROR:', e.stack);
   failures++;

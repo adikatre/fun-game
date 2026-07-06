@@ -34,24 +34,24 @@ export const CONFIG = {
   ],
 
   // --- session: a shift is a timed round with an escalating arc + final rush ---
-  shiftSeconds: 360, // 6-minute shift
-  finalRushLead: 75, // the "final rush" climax starts this many seconds before the end
-  finalRushSize: 4, // burst size at final-rush start
-  finalRushIntervalFactor: 0.7, // spawn interval multiplier during the final rush
+  shiftSeconds: 180, // 3-minute shift
+  finalRushLead: 40, // the "final rush" climax starts this many seconds before the end
+  finalRushSize: 2, // burst size at final-rush start
+  finalRushIntervalFactor: 0.85, // spawn interval multiplier during the final rush
   // per-day (career) difficulty scaling
   dayIntervalFactor: 0.93, // spawn intervals shrink ~7% per day (floored below)
   dayIntervalFloor: 0.6,
   dayRushBonusEvery: 2, // rush waves grow by 1 plane every N days
-  gradeTargetBase: 2400, // cash target for an A on day 1...
-  gradeTargetPerDay: 400, // ...growing per day
+  gradeTargetBase: 1200, // cash target for an A on day 1...
+  gradeTargetPerDay: 200, // ...growing per day
 
   // --- failure ---
   crashesToFire: 2, // 2nd crash ends the shift (you're fired)
 
   // --- separation / conflict ---
   separationMin: 66, // base lateral separation ring radius (px); scaled by wake
-  conflictToCrash: 3.6, // seconds two planes may stay inside separation before they collide
-  predictLookahead: 12, // seconds ahead to project closures for the AMBER pre-warning
+  conflictToCrash: 4.5, // seconds two planes may stay inside separation before they collide
+  predictLookahead: 14, // seconds ahead to project closures for the AMBER pre-warning
 
   // --- aircraft types: cruise px/s, approach factor, turn rate deg/s, wake factor, salary ---
   types: {
@@ -74,25 +74,25 @@ export const CONFIG = {
 
   // --- difficulty ramp (within a shift) ---
   firstSpawnAt: 3, // get a plane on the scope almost immediately
-  spawnIntervalStart: 21, // calm onboarding
-  spawnIntervalEnd: 6.5,
-  rampDurationSeconds: 165,
-  rushWaveEvery: 45, // after the ramp, periodic bursts ("holiday rush")
-  rushWaveSize: 3,
-  maxAirborneStart: 5, // concurrency cap (grows over time) — increased for 3 runways
-  maxAirborneGrowEvery: 35,
-  maxAirborneCap: 16, // raised for larger airport
-  heavyChanceStart: 0.05, // share of heavies grows with the rush
-  heavyChanceEnd: 0.3,
-  emergencyStartAt: 95, // no emergencies during onboarding
-  emergencyChanceEnd: 0.14, // per-spawn chance once fully ramped
+  spawnIntervalStart: 32, // calm onboarding
+  spawnIntervalEnd: 10,
+  rampDurationSeconds: 85,
+  rushWaveEvery: 60, // after the ramp, periodic bursts ("holiday rush")
+  rushWaveSize: 2,
+  maxAirborneStart: 4, // concurrency cap (grows over time)
+  maxAirborneGrowEvery: 45,
+  maxAirborneCap: 10,
+  heavyChanceStart: 0.03, // share of heavies grows with the rush
+  heavyChanceEnd: 0.22,
+  emergencyStartAt: 55, // no emergencies during onboarding
+  emergencyChanceEnd: 0.08, // per-spawn chance once fully ramped
   // day-1 onboarding: gentler ramp so first shift reaches mid-game + final rush
-  day1SpawnIntervalStart: 28,
-  day1SpawnIntervalEnd: 7.5,
-  day1RampDurationSeconds: 210,
-  day1EmergencyStartAt: 130,
-  day1MaxAirborneStart: 4,
-  day1RushWaveSize: 2,
+  day1SpawnIntervalStart: 42,
+  day1SpawnIntervalEnd: 12,
+  day1RampDurationSeconds: 105,
+  day1EmergencyStartAt: 90,
+  day1MaxAirborneStart: 3,
+  day1RushWaveSize: 1,
   // spawn geometry: early traffic enters from the approach side (east), widening
   // to all directions later; aim points are spread so planes don't all knife
   // into the exact center and self-collide.

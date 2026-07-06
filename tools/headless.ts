@@ -139,7 +139,7 @@ function testCorridorBusyWarning(): { pass: boolean; detail: string } {
   const state = createGame(7);
   state.status = 'playing';
   let steps = 0;
-  while (state.aircraft.filter((a) => a.phase === 'inbound').length < 2 && steps < 2400 && state.status === 'playing') {
+  while (state.aircraft.filter((a) => a.phase === 'inbound').length < 2 && steps < 7200 && state.status === 'playing') {
     update(state, STEP);
     steps++;
   }
