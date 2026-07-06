@@ -123,16 +123,15 @@ export interface WeatherCell {
 
 /**
  * menu      — main menu / title screen (game boots here)
- * briefing  — start screen; sim is frozen until the player begins the shift
+ * tutorial  — how-to-play screen; sim is frozen until the player begins the shift
  * playing   — the shift is live
  * debrief   — the shift timer ran out; grade + stats screen
  * fired     — two crashes; failure screen
  * upgrade   — between shifts; tech tree / shop screen
  * stats     — career statistics dashboard
  * settings  — audio / reset settings screen
- * tutorial  — interactive how-to-play tutorial mission
  */
-export type GameStatus = 'menu' | 'briefing' | 'playing' | 'debrief' | 'fired' | 'upgrade' | 'stats' | 'settings' | 'tutorial';
+export type GameStatus = 'menu' | 'tutorial' | 'playing' | 'debrief' | 'fired' | 'upgrade' | 'stats' | 'settings';
 
 /** Lifetime career statistics, persisted across shifts. */
 export interface CareerStats {
@@ -282,5 +281,7 @@ export interface RenderHints {
   shopScrollY?: number;
   confirmingReset?: boolean;
   volume?: number;
+  musicVolume?: number;
+  sfxVolume?: number;
   careerStats?: CareerStats;
 }

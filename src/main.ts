@@ -1,5 +1,5 @@
 // main.ts — wiring + fixed-timestep loop (sim @ 60 Hz; render on rAF with
-// interpolation). Owns the session flow (menu -> briefing -> shift -> debrief ->
+// interpolation). Owns the session flow (menu -> tutorial -> shift -> debrief ->
 // next day), persistence (day / best / mute), and drains the sim's event queue
 // into audio + fx each frame. Decoupling sim from render keeps motion smooth.
 
@@ -64,7 +64,7 @@ const freshSeed = () => (urlSeed != null ? urlSeed : (Math.random() * 0xffffffff
 let seed = urlSeed ?? CONFIG.defaultSeed;
 let upgradeState = loadUpgradeState();
 let state: GameState = createGame(seed, day, true, upgradeState);
-// Boot to menu instead of briefing
+// Boot to menu instead of tutorial
 state.status = 'menu' as any;
 let shiftRecorded = false;
 let isAdPlaying = false;
@@ -89,14 +89,14 @@ function resize(): void {
 window.addEventListener('resize', resize);
 resize();
 
-function newShift(nextDay: number, briefing: boolean): void {
+function newShift(nextDay: number, tutorial: boolean): void {
   day = nextDay;
   save('fa.day', day);
   seed = freshSeed();
-  state = createGame(seed, day, briefing, upgradeState);
+  state = createGame(seed, day, tutorial, upgradeState);
   shiftRecorded = false;
   fx.reset(state);
-  if (!briefing) sdk.gameplayStart();
+  if (!tutorial) sdk.gameplayStart();
 }
 
 /** Called once when a shift ends (debrief or fired): record bests. */
@@ -170,7 +170,7 @@ const input = createInput({
     goToSettings: () => {
       state.status = 'settings' as any;
     },
-    goToBriefing: () => {
+    goToTutorial: () => {
       // Create a fresh game for the new shift
       seed = freshSeed();
       state = createGame(seed, day, true, upgradeState);
@@ -181,6 +181,14 @@ const input = createInput({
       audio.setVolume(v);
     },
     getVolume: () => audio.getVolume(),
+    setMusicVolume: (v: number) => {
+      audio.setMusicVolume(v);
+    },
+    getMusicVolume: () => audio.getMusicVolume(),
+    setSfxVolume: (v: number) => {
+      audio.setSfxVolume(v);
+    },
+    getSfxVolume: () => audio.getSfxVolume(),
     resetCareer: () => {
       resetAllCareerData();
       day = 1;
@@ -302,11 +310,14 @@ const STEP_FF = 1 / CONFIG.simStepHz;
 function drainEvents(): void {
   if (state.events.length === 0) return;
   for (const e of state.events) {
+    if (e.kind === 'rush' || e.kind === 'finalRush') rushUntil = performance.now() + 25_000;
     audio.onEvent(e);
     fx.onEvent(e);
   }
   state.events.length = 0;
 }
+
+let rushUntil = 0; // music treats a wave as "hot" for a while after it spawns
 
 const STEP = 1 / CONFIG.simStepHz;
 let acc = 0;
@@ -338,10 +349,24 @@ function frame(now: number): void {
   fx.update(dt, state);
   if (state.status === 'debrief' || state.status === 'fired') recordShift();
 
-  // continuous alert siren level: red conflict > amber prediction > calm
+  // adaptive audio: alert siren, music intensity, ambience density
   const anyRed = state.status === 'playing' && !state.paused && state.aircraft.some((a) => a.conflict);
   const anyAmber = state.status === 'playing' && !state.paused && state.predicted.length > 0;
-  audio.setAlertLevel(anyRed ? 2 : anyAmber ? 1 : 0);
+  const playingLive = state.status === 'playing' && !state.paused;
+  const rushActive = playingLive && now < rushUntil;
+  const intensity = playingLive
+    ? Math.min(1, 0.15 + 0.05 * state.aircraft.length
+        + (state.predicted.length > 0 ? 0.2 : 0)
+        + (anyRed ? 0.35 : 0)
+        + (rushActive ? 0.2 : 0))
+    : 0;
+  audio.setDynamics({
+    scene: state.status === 'playing' ? 'game' : 'menu',
+    intensity,
+    planeCount: playingLive ? state.aircraft.length : 0,
+    alertLevel: anyRed ? 2 : anyAmber ? 1 : 0,
+    ducked: state.status === 'playing' && state.paused,
+  }, dt);
 
   const alpha = state.paused || state.status !== 'playing' ? 1 : acc / STEP;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);

@@ -32,7 +32,7 @@ function typeHalfSize(t: Aircraft['type']): number {
 function uiContext(state: GameState, hints: RenderHints, vp: Viewport, alpha: number): UiContext {
   const sel = hints.selectedAircraftId != null ? state.aircraft.find((a) => a.id === hints.selectedAircraftId) : undefined;
   const selAirborne = !!sel && (sel.phase === 'inbound' || sel.phase === 'holding' || sel.phase === 'approach');
-  const selTaxi = !!sel && (sel.phase === 'taxiIn' || sel.phase === 'taxiOut' || sel.phase === 'waitCross');
+  const selTaxi = !!sel && (sel.phase === 'taxiIn' || sel.phase === 'taxiOut');
   
   let selectedScreenPos: Vec | undefined;
   if (sel) {
@@ -49,7 +49,7 @@ function uiContext(state: GameState, hints: RenderHints, vp: Viewport, alpha: nu
     selectedHolding: !!sel && sel.phase === 'holding',
     selectedWaitCross: !!sel && sel.phase === 'waitCross',
     selectedTaxi: selTaxi,
-    selectedTakeoff: false,
+    selectedTakeoff: !!sel && sel.phase === 'lineUpWait',
     selectedManualHold: sel?.manualHold,
     selectedScreenPos,
   };
@@ -93,7 +93,7 @@ export function render(
 
   // world layers
   drawTerrainHints(ctx);
-  drawRangeRings(ctx, nowSec);
+  drawRangeRings(ctx);
   drawWeather(ctx, state, nowSec);
   for (const rw of state.runways) drawRunway(ctx, rw, state, hints, nowSec);
   drawGates(ctx, state);
@@ -124,7 +124,7 @@ export function render(
     else if (state.paused) drawPausedBanner(ctx, vp);
   }
 
-  if (state.status === 'briefing') drawBriefing(ctx, state, vp, hints, nowSec);
+  if (state.status === 'tutorial') drawTutorial(ctx, state, vp, hints, nowSec);
   else if (state.status === 'debrief') drawDebrief(ctx, state, vp, hints, nowSec);
   else if (state.status === 'fired') drawFired(ctx, state, vp, hints, nowSec);
   else if (state.status === 'upgrade') drawUpgradeScreen(ctx, state, vp, hints, nowSec);
@@ -169,7 +169,7 @@ function drawTerrainHints(ctx: CanvasRenderingContext2D): void {
   }
 }
 
-function drawRangeRings(ctx: CanvasRenderingContext2D, nowSec: number): void {
+function drawRangeRings(ctx: CanvasRenderingContext2D): void {
   const cx = CONFIG.airportX;
   const cy = CONFIG.airportY;
   ctx.save();
@@ -180,23 +180,6 @@ function drawRangeRings(ctx: CanvasRenderingContext2D, nowSec: number): void {
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.stroke();
   }
-  // subtle rotating sweep
-  const a = (nowSec * 0.45) % (Math.PI * 2);
-  const R = 680;
-  ctx.beginPath();
-  ctx.moveTo(cx, cy);
-  ctx.arc(cx, cy, R, a - 0.4, a);
-  ctx.closePath();
-  const grad = ctx.createLinearGradient(
-    cx + Math.cos(a - 0.4) * R * 0.6,
-    cy + Math.sin(a - 0.4) * R * 0.6,
-    cx + Math.cos(a) * R * 0.6,
-    cy + Math.sin(a) * R * 0.6,
-  );
-  grad.addColorStop(0, 'rgba(74,144,217,0)');
-  grad.addColorStop(1, PALETTE.sweep);
-  ctx.fillStyle = grad;
-  ctx.fill();
   ctx.restore();
 }
 
@@ -1028,7 +1011,7 @@ function drawPausedBanner(ctx: CanvasRenderingContext2D, vp: Viewport): void {
   drawFittedText(ctx, 'PAUSED — clear / dispatch / hold freely', vp.cssW / 2, y + h / 2 + 1, w - 16, 13, 10);
 }
 
-function drawBriefing(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewport, hints: RenderHints, nowSec: number): void {
+function drawTutorial(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewport, hints: RenderHints, nowSec: number): void {
   ctx.fillStyle = 'rgba(232,240,254,0.85)';
   ctx.fillRect(0, 0, vp.cssW, vp.cssH);
   const cx = vp.cssW / 2;
@@ -1046,19 +1029,21 @@ function drawBriefing(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewp
   ctx.font = `900 ${48 * s}px Inter, system-ui, sans-serif`;
   ctx.fillText('FINAL APPROACH', cx, cy - 150);
   ctx.fillStyle = PALETTE.textDim;
+  ctx.font = `700 ${14 * s}px Inter, system-ui, sans-serif`;
+  ctx.fillText('HOW TO PLAY', cx, cy - 128);
   ctx.font = `500 ${13 * s}px Inter, system-ui, sans-serif`;
-  drawWrappedText(ctx, 'you are the tower. everyone lands, everyone leaves, nobody touches.', cx, cy - 122, cardW - 32, 16 * s, 'center');
+  drawWrappedText(ctx, 'you are the tower. everyone lands, everyone leaves, nobody touches.', cx, cy - 110, cardW - 32, 16 * s, 'center');
 
   ctx.fillStyle = PALETTE.text;
   ctx.font = '700 18px Inter, system-ui, sans-serif';
-  ctx.fillText(`SHIFT ${state.day}`, cx, cy - 92);
+  ctx.fillText(`SHIFT ${state.day}`, cx, cy - 80);
   ctx.fillStyle = PALETTE.textDim;
   ctx.font = `500 ${12.5 * s}px Inter, system-ui, sans-serif`;
   const clockLine = `${fmtTime(state.shiftLength)} on the clock · target $${dayDifficulty(state.day).gradeTarget} for an A`;
-  drawWrappedText(ctx, clockLine, cx, cy - 72, cardW - 32, 15 * s, 'center');
+  drawWrappedText(ctx, clockLine, cx, cy - 60, cardW - 32, 15 * s, 'center');
   if (hints.best > 0) {
     ctx.fillStyle = PALETTE.cash;
-    drawWrappedText(ctx, `career best $${hints.best}`, cx, cy - 54, cardW - 32, 15 * s, 'center');
+    drawWrappedText(ctx, `career best $${hints.best}`, cx, cy - 42, cardW - 32, 15 * s, 'center');
   }
 
   const rows: [string, string][] = [
@@ -1677,9 +1662,9 @@ function drawSettingsScreen(ctx: CanvasRenderingContext2D, vp: Viewport, hints: 
 
   // ── Volume section card (responsive width; must mirror input.ts sliderGeom) ──
   const volCardW = Math.min(440, vp.cssW - 24);
-  const volCardH = 120;
+  const volCardH = 224;
   const volCardX = cx - volCardW / 2;
-  const volCardY = vp.cssH / 2 - 120;
+  const volCardY = vp.cssH / 2 - 230;
 
   ctx.save();
   ctx.shadowColor = MENU_PALETTE.cardShadow;
@@ -1695,56 +1680,63 @@ function drawSettingsScreen(ctx: CanvasRenderingContext2D, vp: Viewport, hints: 
   ctx.stroke();
   ctx.restore();
 
-  // volume label
-  ctx.textAlign = 'left';
-  ctx.fillStyle = MENU_PALETTE.textSecondary;
-  ctx.font = '700 12px Inter, system-ui, sans-serif';
-  ctx.fillText('MASTER VOLUME', volCardX + 24, volCardY + 32);
-
-  // slider track — leave room to the right for the % readout
+  // three sliders: master / music / sfx (rows must mirror input.ts sliderGeom)
+  const sliders: Array<{ label: string; value: number }> = [
+    { label: 'MASTER VOLUME', value: volume },
+    { label: 'MUSIC', value: (hints as any).musicVolume ?? 1 },
+    { label: 'SOUND EFFECTS', value: (hints as any).sfxVolume ?? 1 },
+  ];
   const trackW = Math.min(300, volCardW - 118);
   const trackH = 8;
   const trackX = volCardX + 24;
-  const trackY = volCardY + 60;
+  for (const [row, s] of sliders.entries()) {
+    const trackY = volCardY + 60 + row * 62;
 
-  // track background
-  roundRectPath(ctx, trackX, trackY, trackW, trackH, 4);
-  ctx.fillStyle = MENU_PALETTE.sliderTrack;
-  ctx.fill();
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = MENU_PALETTE.textSecondary;
+    ctx.font = '700 12px Inter, system-ui, sans-serif';
+    ctx.fillText(s.label, volCardX + 24, trackY - 28);
 
-  // filled portion
-  const fillW = trackW * Math.max(0, Math.min(1, volume));
-  if (fillW > 0) {
-    roundRectPath(ctx, trackX, trackY, fillW, trackH, 4);
-    ctx.fillStyle = MENU_PALETTE.sliderFill;
+    // track background
+    roundRectPath(ctx, trackX, trackY, trackW, trackH, 4);
+    ctx.fillStyle = MENU_PALETTE.sliderTrack;
     ctx.fill();
+
+    // filled portion
+    const fillW = trackW * Math.max(0, Math.min(1, s.value));
+    if (fillW > 0) {
+      roundRectPath(ctx, trackX, trackY, fillW, trackH, 4);
+      ctx.fillStyle = MENU_PALETTE.sliderFill;
+      ctx.fill();
+    }
+
+    // thumb
+    const thumbX = trackX + fillW;
+    const thumbY = trackY + trackH / 2;
+    const thumbR = 10;
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.15)';
+    ctx.shadowBlur = 6;
+    ctx.shadowOffsetY = 2;
+    ctx.beginPath();
+    ctx.arc(thumbX, thumbY, thumbR, 0, Math.PI * 2);
+    ctx.fillStyle = MENU_PALETTE.sliderThumb;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = MENU_PALETTE.sliderFill;
+    ctx.stroke();
+    ctx.restore();
+
+    // percentage label
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = MENU_PALETTE.text;
+    ctx.font = '700 14px Inter, system-ui, sans-serif';
+    ctx.fillText(`${Math.round(s.value * 100)}%`, trackX + trackW + 16, trackY + trackH / 2);
   }
-
-  // thumb
-  const thumbX = trackX + fillW;
-  const thumbY = trackY + trackH / 2;
-  const thumbR = 10;
-  ctx.save();
-  ctx.shadowColor = 'rgba(0,0,0,0.15)';
-  ctx.shadowBlur = 6;
-  ctx.shadowOffsetY = 2;
-  ctx.beginPath();
-  ctx.arc(thumbX, thumbY, thumbR, 0, Math.PI * 2);
-  ctx.fillStyle = MENU_PALETTE.sliderThumb;
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.shadowOffsetY = 0;
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = MENU_PALETTE.sliderFill;
-  ctx.stroke();
-  ctx.restore();
-
-  // percentage label
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = MENU_PALETTE.text;
-  ctx.font = '700 14px Inter, system-ui, sans-serif';
-  ctx.fillText(`${Math.round(volume * 100)}%`, trackX + trackW + 16, trackY + trackH / 2);
 
   // ── Danger zone section ──
   const dzCardW = Math.min(440, vp.cssW - 24);

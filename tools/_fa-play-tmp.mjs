@@ -54,7 +54,7 @@ const getState = () => page.evaluate(() => {
   return JSON.parse(JSON.stringify(s));
 });
 
-// ---- menu -> briefing -> playing ----
+// ---- menu -> tutorial -> playing ----
 function menuBtnCenter(id) {
   const maxRowW = Math.min(CSS_W - 40, 460);
   const scale = maxRowW / 460;
@@ -75,12 +75,12 @@ if (s.status === 'menu') {
 }
 s = await getState();
 say(`after menu_play status=${s.status}`);
-if (s.status === 'briefing') {
+if (s.status === 'tutorial') {
   await clickCss(CSS_W / 2, CSS_H - 60);
   await page.waitForTimeout(300);
 }
 s = await getState();
-say(`after briefing click status=${s.status} day=${s.day}`);
+say(`after tutorial click status=${s.status} day=${s.day}`);
 
 await page.screenshot({ path: `${OUT}/00-start.png` });
 

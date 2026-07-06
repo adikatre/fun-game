@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
+    "gen:audio": "node tools/gen-audio.mjs",
     "sim:test": "esbuild tools/headless.ts --bundle --platform=node --format=esm | node --input-type=module",
     "smoke": "esbuild tools/smoke-dom.ts --bundle --platform=node --format=esm | node --input-type=module",
     "test": "npm run typecheck && npm run sim:test && npm run smoke",

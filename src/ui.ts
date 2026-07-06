@@ -36,6 +36,37 @@ export interface UiContext {
   selectedScreenPos?: Vec;
 }
 
+export interface PlaneActionSpec {
+  id: ButtonId;
+  label: string;
+  floatW: number;
+  hudW: number;
+}
+
+/** Plane-specific actions shown in both the floating menu and the bottom-right HUD. */
+export function planeActionSpecs(ui: UiContext): PlaneActionSpec[] {
+  if (ui.selectedTakeoff) {
+    return [{ id: 'takeoff', label: 'TAKEOFF', floatW: 80, hudW: 100 }];
+  }
+  if (ui.selectedWaitCross) {
+    return [{ id: 'cross', label: '✈ CROSS', floatW: 80, hudW: 100 }];
+  }
+  if (ui.selectedAirborne) {
+    const holdLabel = ui.selectedHolding ? '↩ RESUME' : '🔄 HOLD';
+    return [
+      { id: 'go_around', label: 'ABORT', floatW: 70, hudW: 90 },
+      { id: 'hold', label: holdLabel, floatW: 75, hudW: 110 },
+    ];
+  }
+  if (ui.selectedTaxi) {
+    return [
+      { id: 'taxi_hold', label: ui.selectedManualHold ? '▶ HOLD' : 'HOLD', floatW: 65, hudW: 85 },
+      { id: 'taxi_continue', label: !ui.selectedManualHold ? '▶ GO' : 'GO', floatW: 60, hudW: 75 },
+    ];
+  }
+  return [];
+}
+
 /** In-game HUD buttons (bottom-right corner; thumb-reachable on touch). */
 export function hudButtons(vp: Viewport, ui: UiContext): UiButton[] {
   if (ui.status !== 'playing') return [];
@@ -51,8 +82,7 @@ export function hudButtons(vp: Viewport, ui: UiContext): UiButton[] {
   };
   add('mute', ui.muted ? '🔇 OFF' : '🔊 ON', 90);
   add('pause', ui.paused ? '▶ RESUME' : '⏸ PAUSE', 110);
-  if (ui.selectedAirborne) add('hold', ui.selectedHolding ? '↩ RESUME' : '🔄 HOLD', 110);
-  if (ui.selectedWaitCross) add('cross', '✈ CROSS', 100);
+  for (const spec of planeActionSpecs(ui)) add(spec.id, spec.label, spec.hudW);
   return btns;
 }
 
@@ -105,7 +135,7 @@ export function menuButtons(vp: Viewport): UiButton[] {
     { id: 'menu_play', label: '▶  START SHIFT', x: cx - bw - gap / 2, y: cy, w: bw, h: bh },
     { id: 'menu_stats', label: '📊  STATISTICS', x: cx + gap / 2, y: cy, w: bw, h: bh },
     { id: 'menu_settings', label: '⚙  SETTINGS', x: cx - bw - gap / 2, y: cy + bh + gap, w: bw, h: bh },
-    { id: 'menu_tutorial', label: '❓  BRIEFING', x: cx + gap / 2, y: cy + bh + gap, w: bw, h: bh },
+    { id: 'menu_tutorial', label: '❓  HOW TO PLAY', x: cx + gap / 2, y: cy + bh + gap, w: bw, h: bh },
   ];
 }
 
@@ -128,18 +158,18 @@ export function settingsButtons(vp: Viewport, confirmingReset: boolean): UiButto
   const bh = 48;
   btns.push({ id: 'settings_back', label: '← BACK TO MENU', x: cx - bw / 2, y: vp.cssH - 80, w: bw, h: bh });
 
-  // Mute toggle — placed below the volume slider, right-aligned inside the
-  // volume card so it never overlaps the percentage readout (mirror of render).
+  // Mute toggle — top-right of the volume card, above the slider rows so it
+  // never overlaps the track hit areas or % readouts (mirror of render).
   const volCardW = Math.min(440, vp.cssW - 24);
   const volCardX = cx - volCardW / 2;
-  const volCardY = vp.cssH / 2 - 120;
+  const volCardY = vp.cssH / 2 - 230;
   const muteW = 90;
   const muteH = 30;
   btns.push({
     id: 'settings_mute',
     label: 'MUTE',
     x: volCardX + volCardW - 24 - muteW,
-    y: volCardY + 82,
+    y: volCardY + 12,
     w: muteW,
     h: muteH,
   });
@@ -166,20 +196,10 @@ export function floatingButtons(vp: Viewport, ui: UiContext): UiButton[] {
   const h = 32;
   const pad = 6;
 
-  // First gather which buttons to show (id, label, width) so we can measure the
-  // total width and clamp the whole strip inside the viewport before laying out.
-  const specs: { id: UiButton['id']; label: string; w: number }[] = [];
-  if (ui.selectedTakeoff) {
-    specs.push({ id: 'takeoff', label: 'TAKEOFF', w: 80 });
-  } else if (ui.selectedAirborne) {
-    specs.push({ id: 'go_around', label: 'ABORT', w: 70 });
-  } else if (ui.selectedTaxi) {
-    specs.push({ id: 'taxi_hold', label: ui.selectedManualHold ? '▶ HOLD' : 'HOLD', w: 65 });
-    specs.push({ id: 'taxi_continue', label: !ui.selectedManualHold ? '▶ GO' : 'GO', w: 60 });
-  }
+  const specs = planeActionSpecs(ui);
   if (specs.length === 0) return [];
 
-  const totalW = specs.reduce((sum, s) => sum + s.w, 0) + pad * (specs.length - 1);
+  const totalW = specs.reduce((sum, s) => sum + s.floatW, 0) + pad * (specs.length - 1);
   const margin = 8;
   // Prefer up-and-right of the plane, but keep the whole strip on-screen.
   let x = ui.selectedScreenPos.x + 30;
@@ -189,8 +209,8 @@ export function floatingButtons(vp: Viewport, ui: UiContext): UiButton[] {
 
   const btns: UiButton[] = [];
   for (const s of specs) {
-    btns.push({ id: s.id, label: s.label, x, y, w: s.w, h });
-    x += s.w + pad;
+    btns.push({ id: s.id, label: s.label, x, y, w: s.floatW, h });
+    x += s.floatW + pad;
   }
   return btns;
 }

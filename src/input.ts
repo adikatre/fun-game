@@ -12,7 +12,7 @@ import { type UpgradeState } from './upgrades';
 import { sdk, FULL_LAUNCH } from './sdk';
 
 export interface UiActions {
-  startShift(): void; // leave the briefing screen
+  startShift(): void; // leave the tutorial screen
   nextShift(): void; // debrief -> next (harder) day
   retryShift(): void; // debrief/fired -> replay this day
   restartKey(): void; // R
@@ -29,9 +29,13 @@ export interface UiActions {
   goToMenu(): void;
   goToStats(): void;
   goToSettings(): void;
-  goToBriefing(): void;
+  goToTutorial(): void;
   setVolume(v: number): void;
   getVolume(): number;
+  setMusicVolume(v: number): void;
+  getMusicVolume(): number;
+  setSfxVolume(v: number): void;
+  getSfxVolume(): number;
   resetCareer(): void;
   getCareerStats(): CareerStats;
   adContinue(): void;
@@ -78,7 +82,7 @@ export function createInput(ctx: InputContext): InputController {
   // new UI state
   let shopScrollY = 0;
   let confirmingReset = false;
-  let volumeSliderDragging = false;
+  let volumeSliderDragging: number | null = null; // slider row being dragged
 
   const toScreen = (e: { clientX: number; clientY: number }): Vec => {
     const r = canvas.getBoundingClientRect();
@@ -93,7 +97,7 @@ export function createInput(ctx: InputContext): InputController {
     const state = getState();
     const sel = selectedId != null ? state.aircraft.find((a) => a.id === selectedId) : undefined;
     const selAirborne = !!sel && (sel.phase === 'inbound' || sel.phase === 'holding' || sel.phase === 'approach');
-    const selTaxi = !!sel && (sel.phase === 'taxiIn' || sel.phase === 'taxiOut' || sel.phase === 'waitCross');
+    const selTaxi = !!sel && (sel.phase === 'taxiIn' || sel.phase === 'taxiOut');
     
     let selectedScreenPos: Vec | undefined;
     if (sel) {
@@ -136,28 +140,37 @@ export function createInput(ctx: InputContext): InputController {
     return id;
   }
 
-  /** Volume slider geometry helpers. */
-  function sliderGeom() {
+  /** Volume slider geometry helpers. Row 0 = master, 1 = music, 2 = sfx. */
+  function sliderGeom(row: number) {
     const vp = getViewport();
     // Must mirror drawSettingsScreen in render.ts so the hit area sits on the track.
     const cx = vp.cssW / 2;
     const volCardW = Math.min(440, vp.cssW - 24);
     const volCardX = cx - volCardW / 2;
-    const volCardY = vp.cssH / 2 - 120;
+    const volCardY = vp.cssH / 2 - 230;
     const sliderWidth = Math.min(300, volCardW - 118);
     const sliderLeft = volCardX + 24;
-    const sliderY = volCardY + 60 + 4; // track centerline (track y + half of 8px height)
+    const sliderY = volCardY + 60 + row * 62 + 4; // track centerline (track y + half of 8px height)
     const sliderH = 36; // hit-test height around the track
     return { sliderLeft, sliderWidth, sliderY, sliderH };
   }
-  function volumeFromX(px: number): number {
-    const { sliderLeft, sliderWidth } = sliderGeom();
+  function volumeFromX(px: number, row: number): number {
+    const { sliderLeft, sliderWidth } = sliderGeom(row);
     return Math.max(0, Math.min(1, (px - sliderLeft) / sliderWidth));
   }
-  function isInSlider(sx: number, sy: number): boolean {
-    const { sliderLeft, sliderWidth, sliderY, sliderH } = sliderGeom();
-    return sx >= sliderLeft && sx <= sliderLeft + sliderWidth &&
-           sy >= sliderY - sliderH / 2 && sy <= sliderY + sliderH / 2;
+  /** Which slider row is under the point, or null. */
+  function sliderRowAt(sx: number, sy: number): number | null {
+    for (let row = 0; row < 3; row++) {
+      const { sliderLeft, sliderWidth, sliderY, sliderH } = sliderGeom(row);
+      if (sx >= sliderLeft && sx <= sliderLeft + sliderWidth &&
+          sy >= sliderY - sliderH / 2 && sy <= sliderY + sliderH / 2) return row;
+    }
+    return null;
+  }
+  function applySliderVolume(row: number, v: number): void {
+    if (row === 0) actions.setVolume(v);
+    else if (row === 1) actions.setMusicVolume(v);
+    else actions.setSfxVolume(v);
   }
 
   function pressButton(b: UiButton): void {
@@ -209,7 +222,7 @@ export function createInput(ctx: InputContext): InputController {
         break;
       // --- new menu/stats/settings buttons ---
       case 'menu_play':
-        actions.goToBriefing();
+        actions.goToTutorial();
         break;
       case 'menu_stats':
         actions.goToStats();
@@ -218,8 +231,8 @@ export function createInput(ctx: InputContext): InputController {
         actions.goToSettings();
         break;
       case 'menu_tutorial':
-        // For now, just go to briefing/play
-        actions.goToBriefing();
+        // For now, just go to tutorial/play
+        actions.goToTutorial();
         break;
       case 'stats_back':
         actions.goToMenu();
@@ -311,11 +324,11 @@ export function createInput(ctx: InputContext): InputController {
     }
 
     if (state.status === 'settings') {
-      // Check volume slider first
-      if (isInSlider(pointerScreen.x, pointerScreen.y)) {
-        volumeSliderDragging = true;
-        const v = volumeFromX(pointerScreen.x);
-        actions.setVolume(v);
+      // Check volume sliders first
+      const row = sliderRowAt(pointerScreen.x, pointerScreen.y);
+      if (row != null) {
+        volumeSliderDragging = row;
+        applySliderVolume(row, volumeFromX(pointerScreen.x, row));
         return;
       }
       const b = buttonAt(allButtons(), pointerScreen.x, pointerScreen.y);
@@ -323,8 +336,8 @@ export function createInput(ctx: InputContext): InputController {
       return;
     }
 
-    // briefing: click anywhere to start
-    if (state.status === 'briefing') {
+    // tutorial: click anywhere to start
+    if (state.status === 'tutorial') {
       actions.commandFeedback();
       actions.startShift();
       return;
@@ -388,9 +401,8 @@ export function createInput(ctx: InputContext): InputController {
     pointerWorld = screenToWorld(pointerScreen);
 
     // Volume slider dragging
-    if (volumeSliderDragging) {
-      const v = volumeFromX(pointerScreen.x);
-      actions.setVolume(v);
+    if (volumeSliderDragging != null) {
+      applySliderVolume(volumeSliderDragging, volumeFromX(pointerScreen.x, volumeSliderDragging));
       return;
     }
 
@@ -405,8 +417,8 @@ export function createInput(ctx: InputContext): InputController {
     if ((e as MouseEvent).button === 2) return;
 
     // Release volume slider drag
-    if (volumeSliderDragging) {
-      volumeSliderDragging = false;
+    if (volumeSliderDragging != null) {
+      volumeSliderDragging = null;
       return;
     }
 
@@ -451,7 +463,7 @@ export function createInput(ctx: InputContext): InputController {
     if (e.code === 'Space') {
       e.preventDefault();
       actions.unlockAudio();
-      if (state.status === 'briefing') actions.startShift();
+      if (state.status === 'tutorial') actions.startShift();
       else if (state.status === 'playing') actions.togglePause();
       else actions.retryShift();
       return;
@@ -521,6 +533,8 @@ export function createInput(ctx: InputContext): InputController {
       shopScrollY,
       confirmingReset,
       volume: actions.getVolume(),
+      musicVolume: actions.getMusicVolume(),
+      sfxVolume: actions.getSfxVolume(),
       careerStats: actions.getCareerStats(),
     };
   }

@@ -180,7 +180,6 @@ export const PALETTE = {
   // range rings / scope overlay
   ring: 'rgba(100,120,160,0.12)',
   ringText: 'rgba(80,100,140,0.45)',
-  sweep: 'rgba(100,130,200,0.06)',
 
   // runway
   runway: '#B8C4D0',

@@ -1,5 +1,5 @@
 // Post-fix verification: drives the game headlessly at multiple viewports,
-// asserting no console errors, correct menu->briefing->shift->debrief flow,
+// asserting no console errors, correct menu->tutorial->shift->debrief flow,
 // and that ads are gated in Basic Launch. Screenshots go to tools/qa-shots/.
 import { chromium } from 'playwright';
 import { mkdirSync } from 'fs';
@@ -66,13 +66,13 @@ const browser = await chromium.launch();
   await click(page, ...menuBtnCenter('menu_play', vp.w, vp.h));
   await drive(page, 15);
   s = await state(page);
-  s?.status === 'briefing' ? pass('menu_play -> briefing') : fail(`expected briefing got ${s?.status}`);
-  await page.screenshot({ path: `${OUT}/briefing-1280.png` });
+  s?.status === 'tutorial' ? pass('menu_play -> tutorial') : fail(`expected tutorial got ${s?.status}`);
+  await page.screenshot({ path: `${OUT}/tutorial-1280.png` });
 
   await click(page, vp.w / 2, vp.h - 60);
   await drive(page, 30);
   s = await state(page);
-  s?.status === 'playing' ? pass('briefing click -> playing') : fail(`expected playing got ${s?.status}`);
+  s?.status === 'playing' ? pass('tutorial click -> playing') : fail(`expected playing got ${s?.status}`);
 
   await page.keyboard.press('Space');
   await drive(page, 10);

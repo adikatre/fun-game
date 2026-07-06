@@ -108,7 +108,7 @@ export function buildRunways(upgradeState: UpgradeState): Runway[] {
 export function createGame(
   seed: number = CONFIG.defaultSeed,
   day = 1,
-  briefing = false,
+  tutorial = false,
   upgradeState: UpgradeState = createUpgradeState(),
 ): GameState {
   const rng = createRng(seed);
@@ -125,7 +125,7 @@ export function createGame(
   return {
     time: 0,
     paused: false,
-    status: briefing ? 'briefing' : 'playing',
+    status: tutorial ? 'tutorial' : 'playing',
     day,
     shiftLength: CONFIG.shiftSeconds,
     grade: null,
@@ -165,15 +165,15 @@ export function createGame(
 export function restart(
   seed: number,
   day = 1,
-  briefing = false,
+  tutorial = false,
   upgradeState: UpgradeState = createUpgradeState(),
 ): GameState {
-  return createGame(seed, day, briefing, upgradeState);
+  return createGame(seed, day, tutorial, upgradeState);
 }
 
-/** Leave the briefing / menu screen and start the shift (QA aids may call from menu). */
+/** Leave the tutorial / menu screen and start the shift (QA aids may call from menu). */
 export function startShift(state: GameState): void {
-  if (state.status === 'briefing' || state.status === 'menu') state.status = 'playing';
+  if (state.status === 'tutorial' || state.status === 'menu') state.status = 'playing';
 }
 
 // ----------------------------------------------------------------------------

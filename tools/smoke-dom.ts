@@ -24,7 +24,7 @@ try {
   check('boots to the menu screen', getGame().status === 'menu');
   // Click the "START SHIFT" button (menu_play) which is at center-left
   fireScreenClick({ x: (1280 / 2) - 100, y: (800 / 2) + 50 });
-  check('click menu_play goes to briefing', getGame().status === 'briefing');
+  check('click menu_play goes to tutorial', getGame().status === 'tutorial');
   fireScreenClick({ x: 1280 / 2, y: 800 - 60 });
   check('click starts the shift', getGame().status === 'playing');
 
@@ -158,7 +158,7 @@ try {
   check('shift timer ends in debrief or fired', getGame().status === 'debrief' || getGame().status === 'fired');
   check('a grade was assigned', typeof getGame().grade === 'string');
 
-  // get past briefing/debriefing to start day 2
+  // get past tutorial/debriefing to start day 2
   fireScreenClick({ x: 1280 / 2, y: 532 });
   check('TRY AGAIN restarts the day', getGame().status === 'playing' || getGame().status === 'upgrade');
 } catch (e: any) {

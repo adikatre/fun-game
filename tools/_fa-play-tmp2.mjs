@@ -61,12 +61,12 @@ if (s.status === 'menu') {
   await page.waitForTimeout(300);
 }
 s = await getState();
-if (s.status === 'briefing') {
+if (s.status === 'tutorial') {
   await clickCss(CSS_W / 2, CSS_H - 60);
   await page.waitForTimeout(300);
 }
 s = await getState();
-say(`after briefing click status=${s.status} day=${s.day}`);
+say(`after tutorial click status=${s.status} day=${s.day}`);
 await page.screenshot({ path: `${OUT}/00-start.png` });
 
 function chooseEnd(ac, rw) {
