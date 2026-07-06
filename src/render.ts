@@ -488,7 +488,7 @@ function drawAircraft(
   const pulse = 0.5 + 0.5 * Math.sin(nowSec * 6);
 
   const isDep = ac.phase === 'taxiOut' || ac.phase === 'holdShort' || ac.phase === 'takeoff' || ac.phase === 'departing' || ac.phase === 'readyDep';
-  const isGroundArrival = ac.phase === 'landing' || ac.phase === 'taxiIn' || ac.phase === 'atGate';
+  const isGroundArrival = ac.phase === 'atGate';
   const isWaiting = ac.phase === 'waitCross';
 
   let color: string = PALETTE.blip;
