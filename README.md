@@ -6,7 +6,8 @@ it again — **without losing separation, fouling a runway, or running anyone ou
 of fuel.** A shift is **6 minutes**, graded S→F, ending in a **final rush**
 climax. Each career day is harder than the last. **Two crashes and you're fired.**
 
-Fully synthesized audio (no assets), mouse + touch input, single-file build.
+Procedural SFX + adaptive music/ambience (generated stems inlined at build
+time), mouse + touch input, single-file build.
 
 ## Run it
 
@@ -19,8 +20,9 @@ npm run preview    # serve the built bundle
 
 ## Deploy
 
-`npm run build` emits a single self-contained `dist/index.html` (JS + CSS + audio
-all inlined; zero external requests). Deploying = putting that one file anywhere:
+`npm run build` emits a single self-contained `dist/index.html` (JS + CSS +
+inlined audio/fonts; zero runtime external requests). Deploying = putting that one
+file anywhere:
 
 - **Netlify / Vercel / GitHub Pages**: publish the `dist/` folder.
 - **itch.io**: zip `dist/index.html` (as `index.html`) and upload as an HTML5 game.
@@ -68,9 +70,10 @@ auto-clears traffic; `?ff=<seconds>` fast-forwards the sim at load.
 - **Predictive conflict alerts**: closures are projected ~12 s ahead — an amber
   ✕ marks *where* separation will be lost and in how many seconds, before the
   red alert (with visible countdown-to-collision ring) ever starts.
-- **Synthesized audio**: radio chirps, touchdown thumps, streak-rising cash
-  chimes, mayday tones, a conflict klaxon, crash booms, ambience — all WebAudio,
-  zero asset files.
+- **Adaptive audio**: procedural SFX (radio chirps, touchdown thumps, streak
+  chimes, mayday tones, conflict klaxon, crash booms) plus generated music stems
+  and an ambience bed that crossfade with gameplay intensity — all inlined into
+  the single-file build.
 - **Juice**: floating +$ popups, screen shake, incident flash, event banners,
   animated cash counter, radar sweep.
 - **Runways work from either end** (four approach corridors per runway);
@@ -85,30 +88,34 @@ Strict separation, deterministic sim:
 
 ```
 src/
-  config.ts   All tuning constants + palette + per-day difficulty. Tweak here.
-  rng.ts      Seeded PRNG (mulberry32). The sim uses ONLY this, never Math.random.
-  types.ts    Shared data model (Aircraft, Runway, GameState, GameEvent, ...).
-  sim.ts      All game state + update(state, dt). No DOM. Emits GameEvents.
-  render.ts   Draws a GameState as a radar scope. Interpolates motion. No logic.
-  input.ts    Pointer/keyboard -> player actions. Produces render hints.
-  ui.ts       Screen-space button layout shared by render + input.
-  audio.ts    WebAudio synth engine (event-driven; no assets).
-  fx.ts       Render-only feedback: popups, shake, banners, cash tween.
-  main.ts     Fixed-timestep loop + session flow (briefing→shift→debrief→next day),
-              localStorage persistence, event draining into audio/fx.
-  sdk.ts      No-op platform SDK interface (forward hook).
+  config.ts         All tuning constants + palette + per-day difficulty. Tweak here.
+  rng.ts            Seeded PRNG (mulberry32). The sim uses ONLY this, never Math.random.
+  types.ts          Shared data model (Aircraft, Runway, GameState, GameEvent, ...).
+  sim.ts            All game state + update(state, dt). No DOM. Emits GameEvents.
+  render.ts         Draws a GameState as a radar scope. Interpolates motion. No logic.
+  input.ts          Pointer/keyboard -> player actions. Produces render hints.
+  ui.ts             Screen-space button layout shared by render + input.
+  audio.ts          WebAudio engine: procedural SFX + directors for music/ambience.
+  music.ts          Adaptive background music (phase-locked MP3 stems).
+  ambience.ts       Dynamic airport soundscape (bed + procedural layers).
+  assets/audio-data.ts  Base64 MP3 clips consumed by music/ambience (generated).
+  fx.ts             Render-only feedback: popups, shake, banners, cash tween.
+  upgrades.ts       Between-shift tech tree (runways, gates, radar, ...).
+  stats.ts          Career stats persistence (localStorage).
+  main.ts           Fixed-timestep loop + session flow (menu→tutorial→shift→
+                    debrief→upgrade), localStorage persistence, event draining.
+  sdk.ts            No-op platform SDK interface (forward hook).
 tools/
-  headless.ts Sim metrics harness (auto-controller + tension/determinism/perf).
-  fakedom.ts  Minimal DOM/Canvas2D stub for the smoke test.
-  smoke-dom.ts Full-stack runtime smoke test (input → sim → render, 20 checks).
+  gen-audio.mjs     Offline renderer for music/ambience stems → audio-data.ts.
+  headless.ts       Sim metrics harness (auto-controller + tension/determinism/perf).
+  fakedom.ts        Minimal DOM/Canvas2D stub for the smoke test.
+  smoke-dom.ts      Full-stack runtime smoke test (input → sim → render, 20+ checks).
 ```
 
 - **Determinism:** same seed + same player actions ⇒ identical evolution. The
   sim communicates outward only through `state.events` (drained by `main` for
   audio/fx), so feedback never touches the simulation. Verified by the harness.
 - **Pause-to-replan:** sim time freezes while all commands stay live.
-
-## Deferred ideas
 
 ## Deferred ideas
 
