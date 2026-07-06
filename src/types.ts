@@ -108,6 +108,7 @@ export interface Gate {
   x: number;
   y: number;
   occupantId: number | null;
+  useCount: number; // times assigned; nudges selection away from a gate the sim keeps favoring on distance alone
 }
 
 /** A weather cell drifting across the map (no-fly zone). */

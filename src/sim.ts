@@ -131,7 +131,7 @@ export function createGame(
     grade: null,
     aircraft: [],
     runways: buildRunways(upgradeState),
-    gates: gateLayouts.map((g, i) => ({ id: i + 1, x: g.x, y: g.y, occupantId: null })),
+    gates: gateLayouts.map((g, i) => ({ id: i + 1, x: g.x, y: g.y, occupantId: null, useCount: 0 })),
     weather: [],
     incidents: 0,
     handled: 0,
@@ -560,17 +560,22 @@ function freeGate(state: GameState, ac: Aircraft): void {
   if (g && g.occupantId === ac.id) g.occupantId = null;
   ac.gateId = null;
 }
+// Distance alone can permanently starve a gate that's never geometrically closest
+// from any rollout end (e.g. a middle gate flanked by two outer ones). Add a small
+// per-use penalty so a heavily-used gate loses its edge to an idle neighbor over time.
+const GATE_FAIRNESS_PENALTY = 40;
 function nearestFreeGate(state: GameState, ac: Aircraft): Gate | null {
   let best: Gate | null = null;
-  let bd = Infinity;
+  let bestScore = Infinity;
   for (const g of state.gates) {
     if (g.occupantId !== null) continue;
-    const d = dist(ac.x, ac.y, g.x, g.y);
-    if (d < bd) {
-      bd = d;
+    const score = dist(ac.x, ac.y, g.x, g.y) + g.useCount * GATE_FAIRNESS_PENALTY;
+    if (score < bestScore) {
+      bestScore = score;
       best = g;
     }
   }
+  if (best) best.useCount += 1;
   return best;
 }
 /** A shared runway is clear for a departure only if no arrival is landing/short-final. */
