@@ -60,8 +60,12 @@ export const CONFIG = {
     heavy: { speed: 30, turnRateDeg: 20, wake: 1.5, salary: 180, label: 'heavy' },
   },
   approachSpeedFactor: 0.72, // planes slow down on final
-  arriveRadius: 18, // waypoint capture distance
   alignToleranceDeg: 22, // heading must be within this of runway heading to land (else go-around)
+  // approach guidance: planes join the extended centerline at a per-plane fix,
+  // then track the centerline in (pure pursuit) so they arrive aligned.
+  approachJoinCaptureRadius: 90, // join-fix capture distance (>= worst-case turn radius so nobody orbits it)
+  approachLookahead: 110, // centerline-tracking aim distance (> turn radius for smooth convergence)
+  approachMinJoinDist: 220, // join fix placed at least this far from the plane (> 2x turn radius, no orbit trap)
 
   // --- runway occupancy ---
   rolloutSeconds: 2.4, // how long a landing plane blocks the runway

@@ -391,14 +391,50 @@ export function approachCountOnCorridor(
   ).length;
 }
 
-function buildApproachWaypoints(re: RunwayEnd): Vec[] {
+/** Signed along-track position relative to a runway end's threshold (>0 = past it). */
+function alongTrack(ac: Aircraft, re: RunwayEnd): number {
+  return (ac.x - re.threshold.x) * Math.cos(re.dir) + (ac.y - re.threshold.y) * Math.sin(re.dir);
+}
+/** Signed lateral offset from the extended centerline of a runway end. */
+function crossTrack(ac: Aircraft, re: RunwayEnd): number {
+  return -(ac.x - re.threshold.x) * Math.sin(re.dir) + (ac.y - re.threshold.y) * Math.cos(re.dir);
+}
+
+/**
+ * Build an approach path suited to where THIS plane currently is.
+ * A plane already established inbound (near the centerline, far enough out,
+ * pointed the right way) goes straight in: [finalEntry, threshold].
+ * Everyone else first flies to a join fix on the extended centerline:
+ * [joinFix, finalEntry, threshold]. The fix sits far enough out to leave room
+ * to align, and never so close to the plane that it falls inside the turning
+ * circle (which makes the plane orbit it forever).
+ */
+function buildApproachWaypoints(re: RunwayEnd, ac: Aircraft): Vec[] {
   const dx = Math.cos(re.dir);
   const dy = Math.sin(re.dir);
-  const iaf = {
-    x: re.finalEntry.x - dx * CONFIG.approachIafExtra,
-    y: re.finalEntry.y - dy * CONFIG.approachIafExtra,
-  };
-  return [iaf, { ...re.finalEntry }, { ...re.threshold }];
+  const distToRun = -alongTrack(ac, re);
+  const cross = crossTrack(ac, re);
+  const finalLeg = [{ ...re.finalEntry }, { ...re.threshold }];
+
+  const established =
+    distToRun > CONFIG.approachLength * 0.7 &&
+    Math.abs(cross) < 40 &&
+    Math.abs(angleDiff(ac.heading, re.dir)) < deg(45);
+  if (established) return finalLeg;
+
+  // Join at the plane's own distance out when it's beyond the corridor (no
+  // doubling back to a fixed IAF), clamped to sane bounds.
+  const minOut = CONFIG.approachLength + CONFIG.approachIafExtra;
+  const maxOut = CONFIG.approachLength + 3 * CONFIG.approachIafExtra;
+  let joinDist = Math.max(minOut, Math.min(distToRun, maxOut));
+  // Keep the fix outside the plane's turn circle: push it further out if needed.
+  const minJoin = CONFIG.approachMinJoinDist;
+  if (Math.abs(cross) < minJoin) {
+    const push = Math.sqrt(minJoin * minJoin - cross * cross);
+    if (Math.abs(joinDist - distToRun) < push) joinDist = distToRun + push;
+  }
+  const joinFix = { x: re.threshold.x - dx * joinDist, y: re.threshold.y - dy * joinDist };
+  return [joinFix, ...finalLeg];
 }
 
 /** Clear a plane to land on a specific END of a runway (the side the player chose). */
@@ -415,7 +451,7 @@ export function assignApproach(state: GameState, aircraftId: number, runwayId: n
   ac.assignedRunwayId = rw.id;
   ac.assignedEnd = end;
   ac.holdCenter = null;
-  ac.waypoints = buildApproachWaypoints(re);
+  ac.waypoints = buildApproachWaypoints(re, ac);
   if (!corridorBusy) state.events.push({ kind: 'assign', x: ac.x, y: ac.y });
   return true;
 }
@@ -543,7 +579,9 @@ function goAround(state: GameState, ac: Aircraft, penalize = true): void {
 
 function attemptLanding(state: GameState, ac: Aircraft, rw: Runway, end: 0 | 1): void {
   const re = rw.ends[end];
-  const aligned = Math.abs(angleDiff(ac.heading, re.dir)) <= deg(CONFIG.alignToleranceDeg);
+  const aligned =
+    Math.abs(angleDiff(ac.heading, re.dir)) <= deg(CONFIG.alignToleranceDeg) &&
+    Math.abs(crossTrack(ac, re)) <= 40;
   const someoneLinedUp = state.aircraft.some((a) => a.phase === 'lineUpWait' && a.assignedRunwayId === rw.id);
   const free = state.time >= rw.occupiedUntil && !someoneLinedUp;
   if (free && (aligned || ac.emergency !== 'none')) {
@@ -564,7 +602,7 @@ function attemptLanding(state: GameState, ac: Aircraft, rw: Runway, end: 0 | 1):
     rw.occupiedUntil = state.time + ac.landTimer;
   } else if (ac.emergency === 'medical') {
     // medical can't go around — re-fly the approach (tight retry)
-    ac.waypoints = buildApproachWaypoints(re);
+    ac.waypoints = buildApproachWaypoints(re, ac);
   } else {
     goAround(state, ac);
   }
@@ -905,14 +943,28 @@ function stepAircraft(state: GameState, ac: Aircraft, dt: number, turnaroundMult
 
   // --- steering (set heading) + speed target ---
   if (ac.phase === 'approach') {
-    // Slow to half-speed on the final segment (last waypoint = threshold) for smoother capture
+    // Slow down on the final segment (last waypoint = threshold) for smoother capture
     const approachBase = commandedCruiseSpeed(ac) * CONFIG.approachSpeedFactor;
     ac.speed = ac.waypoints.length <= 1 ? approachBase * 0.6 : approachBase;
-    const wp = ac.waypoints[0];
-    if (wp) ac.heading = turnToward(ac.heading, Math.atan2(wp.y - ac.y, wp.x - ac.x), ac.turnRate * dt);
     const rw = ac.assignedRunwayId != null ? findRunway(state, ac.assignedRunwayId) : undefined;
     if (rw && ac.assignedEnd != null) {
-      const th = rw.ends[ac.assignedEnd].threshold;
+      const re = rw.ends[ac.assignedEnd];
+      let target: Vec;
+      if (ac.waypoints.length >= 3) {
+        // still heading for the join fix
+        target = ac.waypoints[0];
+      } else {
+        // Established: track the extended centerline — aim at a point a fixed
+        // lookahead ahead of the plane's abeam position, so it converges onto
+        // the centerline and crosses the threshold aligned.
+        const aim = alongTrack(ac, re) + CONFIG.approachLookahead;
+        target = {
+          x: re.threshold.x + Math.cos(re.dir) * aim,
+          y: re.threshold.y + Math.sin(re.dir) * aim,
+        };
+      }
+      ac.heading = turnToward(ac.heading, Math.atan2(target.y - ac.y, target.x - ac.x), ac.turnRate * dt);
+      const th = re.threshold;
       ac.altitude = Math.round(3000 * clamp01(dist(ac.x, ac.y, th.x, th.y) / CONFIG.approachLength));
     }
   } else if (ac.phase === 'holding' && ac.holdCenter) {
@@ -1041,15 +1093,27 @@ function stepAircraft(state: GameState, ac: Aircraft, dt: number, turnaroundMult
     return 'none';
   }
 
-  // approach: waypoint capture -> landing attempt
-  // Use a larger capture radius for the threshold (final waypoint) to prevent overshoots
-  const wp = ac.waypoints[0];
-  const captureR = (ac.phase === 'approach' && ac.waypoints.length === 1) ? 40 : CONFIG.arriveRadius;
-  if (wp && dist(ac.x, ac.y, wp.x, wp.y) < captureR) {
-    ac.waypoints.shift();
-    if (ac.waypoints.length === 0 && ac.phase === 'approach' && ac.assignedRunwayId != null && ac.assignedEnd != null) {
-      const rw = findRunway(state, ac.assignedRunwayId);
-      if (rw) attemptLanding(state, ac, rw, ac.assignedEnd);
+  // approach: fix capture -> landing attempt
+  if (ac.phase === 'approach' && ac.assignedRunwayId != null && ac.assignedEnd != null) {
+    const rw = findRunway(state, ac.assignedRunwayId);
+    if (rw) {
+      const re = rw.ends[ac.assignedEnd];
+      // join fix: captured by proximity (radius exceeds any turn radius, so no orbiting)
+      if (
+        ac.waypoints.length === 3 &&
+        dist(ac.x, ac.y, ac.waypoints[0].x, ac.waypoints[0].y) < CONFIG.approachJoinCaptureRadius
+      ) {
+        ac.waypoints.shift();
+      }
+      // final entry: captured once the plane passes abeam of it (never orbits a point)
+      if (ac.waypoints.length === 2 && -alongTrack(ac, re) < CONFIG.approachLength) {
+        ac.waypoints.shift();
+      }
+      // threshold: crossing the threshold line triggers the landing attempt
+      if (ac.waypoints.length === 1 && alongTrack(ac, re) > -8) {
+        ac.waypoints.shift();
+        attemptLanding(state, ac, rw, ac.assignedEnd);
+      }
     }
   }
 
