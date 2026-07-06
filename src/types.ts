@@ -52,6 +52,7 @@ export interface Aircraft {
   heading: number; // radians; 0 = +x (east), increases clockwise (screen y-down)
   speed: number; // current world px/s
   cruiseSpeed: number;
+  speedMult: number; // player speed target as fraction of cruise (1 = nominal)
   turnRate: number; // radians/s
   wake: number; // separation multiplier
   altitude: number; // feet, cosmetic + descends on approach
@@ -167,6 +168,7 @@ export type GameEvent =
   | { kind: 'emergency'; emergency: Emergency; callsign: string }
   | { kind: 'crossRunway'; x: number; y: number }
   | { kind: 'manualHold'; hold: boolean; x: number; y: number }
+  | { kind: 'speedAdjust'; faster: boolean; mult: number; x: number; y: number }
   | { kind: 'rush' }
   | { kind: 'finalRush' }
   | { kind: 'shiftEnd'; grade: Grade }

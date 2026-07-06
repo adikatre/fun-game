@@ -258,6 +258,7 @@ function makeAircraft(state: GameState, fuelMult: number): Aircraft {
     heading,
     speed: t.speed,
     cruiseSpeed: t.speed,
+    speedMult: 1,
     turnRate: deg(t.turnRateDeg),
     wake: t.wake,
     altitude: 3200 + Math.floor(rng.next() * 1600),
@@ -507,6 +508,22 @@ export function commandGoAround(state: GameState, aircraftId: number): boolean {
   // If we're already decelerating hard on the runway, we might not be able to abort, but we allow it for now.
   goAround(state, ac);
   return true;
+}
+
+/** Step an airborne plane's commanded speed up or down (spacing tool). */
+export function adjustAirborneSpeed(state: GameState, aircraftId: number, faster: boolean): boolean {
+  const ac = findAircraft(state, aircraftId);
+  if (!ac || !AIRBORNE_PHASES.includes(ac.phase)) return false;
+  const delta = faster ? CONFIG.speedMultStep : -CONFIG.speedMultStep;
+  const next = Math.max(CONFIG.speedMultMin, Math.min(CONFIG.speedMultMax, ac.speedMult + delta));
+  if (next === ac.speedMult) return false;
+  ac.speedMult = next;
+  state.events.push({ kind: 'speedAdjust', faster, mult: next, x: ac.x, y: ac.y });
+  return true;
+}
+
+function commandedCruiseSpeed(ac: Aircraft): number {
+  return ac.cruiseSpeed * ac.speedMult;
 }
 
 // ----------------------------------------------------------------------------
@@ -888,9 +905,8 @@ function stepAircraft(state: GameState, ac: Aircraft, dt: number, turnaroundMult
   // --- steering (set heading) + speed target ---
   if (ac.phase === 'approach') {
     // Slow to half-speed on the final segment (last waypoint = threshold) for smoother capture
-    ac.speed = ac.waypoints.length <= 1
-      ? ac.cruiseSpeed * CONFIG.approachSpeedFactor * 0.6
-      : ac.cruiseSpeed * CONFIG.approachSpeedFactor;
+    const approachBase = commandedCruiseSpeed(ac) * CONFIG.approachSpeedFactor;
+    ac.speed = ac.waypoints.length <= 1 ? approachBase * 0.6 : approachBase;
     const wp = ac.waypoints[0];
     if (wp) ac.heading = turnToward(ac.heading, Math.atan2(wp.y - ac.y, wp.x - ac.x), ac.turnRate * dt);
     const rw = ac.assignedRunwayId != null ? findRunway(state, ac.assignedRunwayId) : undefined;
@@ -906,11 +922,11 @@ function stepAircraft(state: GameState, ac: Aircraft, dt: number, turnaroundMult
     if (r < CONFIG.holdRadius * 0.85) desired -= 0.4;
     else if (r > CONFIG.holdRadius * 1.15) desired += 0.4;
     ac.heading = turnToward(ac.heading, desired, ac.turnRate * dt);
-    ac.speed = lerp(ac.speed, ac.cruiseSpeed, 1.5 * dt);
+    ac.speed = lerp(ac.speed, commandedCruiseSpeed(ac), 1.5 * dt);
   } else if (ac.phase === 'landing') {
     ac.speed = Math.max(CONFIG.taxiSpeed, ac.speed - ac.landDecel * dt);
   } else if (ac.phase === 'departing') {
-    ac.speed = Math.min(ac.cruiseSpeed, ac.speed + 40 * dt);
+    ac.speed = Math.min(commandedCruiseSpeed(ac), ac.speed + 40 * dt);
     ac.altitude = Math.min(6000, ac.altitude + 1300 * dt);
   } else if (ac.phase === 'takeoff') {
     ac.speed = Math.min(ac.cruiseSpeed, ac.speed + 45 * dt);
@@ -925,8 +941,8 @@ function stepAircraft(state: GameState, ac: Aircraft, dt: number, turnaroundMult
   } else if (ac.phase === 'atGate' || ac.phase === 'readyDep' || ac.phase === 'holdShort' || ac.phase === 'lineUpWait') {
     ac.speed = 0;
   } else {
-    // inbound flies straight at cruise speed
-    ac.speed = lerp(ac.speed, ac.cruiseSpeed, 1.5 * dt);
+    // inbound flies straight at commanded cruise speed
+    ac.speed = lerp(ac.speed, commandedCruiseSpeed(ac), 1.5 * dt);
   }
 
   // --- advance position ---

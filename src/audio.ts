@@ -330,6 +330,10 @@ export class AudioEngine {
         if (e.hold) this.tone(460, 'triangle', 0.045, 0.07, 0, 300);
         else this.tone(300, 'triangle', 0.045, 0.07, 0, 460);
         break;
+      case 'speedAdjust': // airborne speed command ack
+        if (e.faster) this.tone(520, 'triangle', 0.04, 0.06, 0, 620);
+        else this.tone(620, 'triangle', 0.04, 0.06, 0, 520);
+        break;
       case 'purchase':
         this.tone(523, 'sine', 0.06, 0.12, 0, undefined, 0.25);
         this.tone(659, 'sine', 0.06, 0.12, 0.1, undefined, 0.25);

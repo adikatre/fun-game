@@ -7,6 +7,7 @@ import { FULL_LAUNCH } from './sdk';
 export type ButtonId =
   | 'pause' | 'mute' | 'hold' | 'primary' | 'retry' | 'cross' | 'shop_done'
   | 'go_around'
+  | 'speed_slower' | 'speed_faster'
   | 'taxi_hold' | 'taxi_continue' | 'takeoff'
   // menu
   | 'menu_play' | 'menu_stats' | 'menu_settings' | 'menu_tutorial'
@@ -28,6 +29,7 @@ export interface UiContext {
   muted: boolean;
   status: GameState['status'];
   selectedAirborne: boolean; // an airborne arrival is selected (HOLD applies)
+  selectedAirborneSpeed: boolean; // any airborne plane selected (speed +/- applies)
   selectedHolding: boolean;
   selectedWaitCross: boolean; // a ground plane waiting to cross a runway
   selectedTaxi: boolean; // a ground plane taxiing
@@ -51,13 +53,21 @@ export function planeActionSpecs(ui: UiContext): PlaneActionSpec[] {
   if (ui.selectedWaitCross) {
     return [{ id: 'cross', label: '✈ CROSS', floatW: 80, hudW: 100 }];
   }
+  const specs: PlaneActionSpec[] = [];
   if (ui.selectedAirborne) {
     const holdLabel = ui.selectedHolding ? '↩ RESUME' : '🔄 HOLD';
-    return [
+    specs.push(
       { id: 'go_around', label: 'ABORT', floatW: 70, hudW: 90 },
       { id: 'hold', label: holdLabel, floatW: 75, hudW: 110 },
-    ];
+    );
   }
+  if (ui.selectedAirborneSpeed) {
+    specs.push(
+      { id: 'speed_slower', label: '− SLOW', floatW: 62, hudW: 78 },
+      { id: 'speed_faster', label: '+ FAST', floatW: 62, hudW: 78 },
+    );
+  }
+  if (specs.length > 0) return specs;
   if (ui.selectedTaxi) {
     return [
       { id: 'taxi_hold', label: ui.selectedManualHold ? '▶ HOLD' : 'HOLD', floatW: 65, hudW: 85 },

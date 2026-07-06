@@ -158,6 +158,11 @@ export const CONFIG = {
   holdStackAngleDeg: 45, // angular step when searching for a free orbit fix
   holdStackRadius: 90, // extra placement radius per retry slot (concentric stack)
 
+  // --- airborne speed commands (player spacing tool) ---
+  speedMultMin: 0.65,
+  speedMultMax: 1.35,
+  speedMultStep: 0.1,
+
   // --- determinism ---
   defaultSeed: 7,
   simStepHz: 60,

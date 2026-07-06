@@ -32,6 +32,7 @@ function typeHalfSize(t: Aircraft['type']): number {
 function uiContext(state: GameState, hints: RenderHints, vp: Viewport, alpha: number): UiContext {
   const sel = hints.selectedAircraftId != null ? state.aircraft.find((a) => a.id === hints.selectedAircraftId) : undefined;
   const selAirborne = !!sel && (sel.phase === 'inbound' || sel.phase === 'holding' || sel.phase === 'approach');
+  const selAirborneSpeed = !!sel && AIRBORNE_PHASES.includes(sel.phase);
   const selTaxi = !!sel && (sel.phase === 'taxiIn' || sel.phase === 'taxiOut');
   
   let selectedScreenPos: Vec | undefined;
@@ -46,6 +47,7 @@ function uiContext(state: GameState, hints: RenderHints, vp: Viewport, alpha: nu
     muted: hints.muted,
     status: state.status,
     selectedAirborne: selAirborne,
+    selectedAirborneSpeed: selAirborneSpeed,
     selectedHolding: !!sel && sel.phase === 'holding',
     selectedWaitCross: !!sel && sel.phase === 'waitCross',
     selectedTaxi: selTaxi,
@@ -643,7 +645,11 @@ function drawAircraft(
     ctx.font = '500 9.5px Inter, system-ui, sans-serif';
     ctx.fillStyle = PALETTE.textDim;
     const tag = ac.emergency === 'medical' ? 'MAYDAY' : ac.emergency === 'lowFuel' ? 'FUEL' : CONFIG.types[ac.type].label;
-    const detail = `${Math.round(ac.altitude / 100)}·${Math.round(ac.fuelSeconds)}s·${tag}`;
+    const spd =
+      AIRBORNE_PHASES.includes(ac.phase) && Math.abs(ac.speedMult - 1) > 0.01
+        ? `${Math.round(ac.speedMult * 100)}%·`
+        : '';
+    const detail = `${spd}${Math.round(ac.altitude / 100)}·${Math.round(ac.fuelSeconds)}s·${tag}`;
     ctx.fillText(truncateText(ctx, detail, cardW - 8), tx, ty + 11);
   } else {
     ctx.font = '600 9.5px Inter, system-ui, sans-serif';
@@ -1008,7 +1014,7 @@ function drawPausedBanner(ctx: CanvasRenderingContext2D, vp: Viewport): void {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.font = '600 13px Inter, system-ui, sans-serif';
-  drawFittedText(ctx, 'PAUSED — clear / dispatch / hold freely', vp.cssW / 2, y + h / 2 + 1, w - 16, 13, 10);
+  drawFittedText(ctx, 'PAUSED — clear / dispatch / hold / speed freely', vp.cssW / 2, y + h / 2 + 1, w - 16, 13, 10);
 }
 
 function drawTutorial(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewport, hints: RenderHints, nowSec: number): void {
@@ -1050,6 +1056,7 @@ function drawTutorial(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewp
     ['DRAG a plane to a runway side', 'clears an arrival to land there'],
     ['BUSY corridor warning', 'you can still clear a second plane — but separation is on you'],
     ['RIGHT-CLICK · HOLD button', 'orbit extra arrivals while you sequence one at a time'],
+    ['+ FAST / − SLOW on a plane', 'space arrivals apart without putting everyone in a hold'],
     ['GREEN planes are boarded', 'drag them to a runway to launch'],
     ['TAP a plane holding short', 'to authorize it across a runway'],
     ['CLICK an airborne plane', 'ABORT to go around'],

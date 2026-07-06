@@ -4,8 +4,9 @@
 // side (or tap a plane, then tap the side) to clear it to land from that end;
 // right-click or double-tap = hold; Space = pause; M = mute; R = restart.
 
-import { commandToRunway, toggleHold, commandGoAround, toggleManualHold, commandTakeoff } from './sim';
+import { commandToRunway, toggleHold, commandGoAround, toggleManualHold, commandTakeoff, adjustAirborneSpeed } from './sim';
 import type { Aircraft, CareerStats, GameState, RenderHints, Vec, Viewport } from './types';
+import { AIRBORNE_PHASES } from './types';
 import { buttonAt, endButtons, hudButtons, upgradeButtons, floatingButtons, menuButtons, statsButtons, settingsButtons, type UiButton, type UiContext } from './ui';
 import { upgradeAtPoint, upgradeScrollMax } from './upgrade-layout';
 import { type UpgradeState } from './upgrades';
@@ -97,6 +98,7 @@ export function createInput(ctx: InputContext): InputController {
     const state = getState();
     const sel = selectedId != null ? state.aircraft.find((a) => a.id === selectedId) : undefined;
     const selAirborne = !!sel && (sel.phase === 'inbound' || sel.phase === 'holding' || sel.phase === 'approach');
+    const selAirborneSpeed = !!sel && AIRBORNE_PHASES.includes(sel.phase);
     const selTaxi = !!sel && (sel.phase === 'taxiIn' || sel.phase === 'taxiOut');
     
     let selectedScreenPos: Vec | undefined;
@@ -110,6 +112,7 @@ export function createInput(ctx: InputContext): InputController {
       muted: actions.getMuted(),
       status: state.status,
       selectedAirborne: selAirborne,
+      selectedAirborneSpeed: selAirborneSpeed,
       selectedHolding: !!sel && sel.phase === 'holding',
       selectedWaitCross: !!sel && sel.phase === 'waitCross',
       selectedTaxi: selTaxi,
@@ -215,6 +218,12 @@ export function createInput(ctx: InputContext): InputController {
         break;
       case 'go_around':
         if (selectedId != null) commandGoAround(state, selectedId);
+        break;
+      case 'speed_slower':
+        if (selectedId != null) adjustAirborneSpeed(state, selectedId, false);
+        break;
+      case 'speed_faster':
+        if (selectedId != null) adjustAirborneSpeed(state, selectedId, true);
         break;
       case 'taxi_hold':
       case 'taxi_continue':
