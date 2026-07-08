@@ -25,11 +25,9 @@ export const CONFIG = {
   runwayExpansionSlots: [
     // Slot 1: diagonal (first shop purchase — runway_2)
     { cx: 730, cy: 440, headingDeg: 135, length: 240, side: 'X' as const },
-    // Slot 2: steeper angle, crosses existing strips
-    { cx: 770, cy: 580, headingDeg: 225, length: 240, side: 'Y' as const },
-    // Slot 3: offset crosswind strip
+    // Slot 2: offset crosswind strip (runway_4)
     { cx: 690, cy: 520, headingDeg: 90, length: 220, side: 'Z' as const },
-    // Slot 4: parallel overflow strip
+    // Slot 3: parallel overflow strip (runway_5)
     { cx: 810, cy: 460, headingDeg: 180, length: 200, side: 'W' as const },
   ],
 

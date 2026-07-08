@@ -6,7 +6,6 @@ import { storage } from './sdk';
 
 export type UpgradeId =
   | 'runway_2'
-  | 'runway_3'
   | 'runway_4'
   | 'runway_5'
   | 'gates_1'
@@ -46,21 +45,12 @@ export const UPGRADE_DEFS: UpgradeDef[] = [
     category: 'runway',
   },
   {
-    id: 'runway_3',
-    name: 'Runway 3',
-    description: 'Add a diagonal runway (crosses existing strips)',
-    cost: 3000,
-    icon: '🛫',
-    requires: 'runway_2',
-    category: 'runway',
-  },
-  {
     id: 'runway_4',
     name: 'Runway 4',
     description: 'Add a second diagonal runway (more intersections)',
     cost: 5000,
     icon: '✈️',
-    requires: 'runway_3',
+    requires: 'runway_2',
     category: 'runway',
   },
   {
@@ -200,7 +190,6 @@ export function purchaseUpgrade(state: UpgradeState, id: UpgradeId): boolean {
 export function extraRunwayCount(state: UpgradeState): number {
   let count = 0;
   if (state.purchased.has('runway_2')) count++;
-  if (state.purchased.has('runway_3')) count++;
   if (state.purchased.has('runway_4')) count++;
   if (state.purchased.has('runway_5')) count++;
   return count;
