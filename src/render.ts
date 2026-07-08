@@ -1033,7 +1033,6 @@ function drawTutorial(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewp
 
   const rows: [string, string][] = [
     ['DRAG a plane to a runway side', 'clears an arrival to land there'],
-    ['BUSY corridor warning', 'you can still clear a second plane — but separation is on you'],
     ['RIGHT-CLICK · HOLD button', 'orbit extra arrivals while you sequence one at a time'],
     ['+ FAST / − SLOW on a plane', 'space arrivals apart without putting everyone in a hold'],
     ['GREEN planes are boarded', 'drag them to a runway to launch'],

@@ -152,7 +152,6 @@ export type Grade = 'S' | 'A' | 'B' | 'C' | 'D' | 'F';
 /** Deterministic sim output events, drained by main each frame for audio/fx. */
 export type GameEvent =
   | { kind: 'assign'; x: number; y: number }
-  | { kind: 'corridorBusy'; x: number; y: number; endName: string }
   | { kind: 'dispatch'; x: number; y: number }
   | { kind: 'hold' }
   | { kind: 'unhold' }

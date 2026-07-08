@@ -54,9 +54,6 @@ export class Fx {
       case 'assign':
         this.pop(e.x, e.y - 14, 'CLEARED ✓', PALETTE.blip, 11, 0.9);
         break;
-      case 'corridorBusy':
-        this.pop(e.x, e.y - 14, `CORRIDOR BUSY — ${e.endName}`, PALETTE.warn, 12, 1.2);
-        break;
       case 'nearMiss':
         this.pop(e.x, e.y - 14, `NEAR MISS`, PALETTE.warn, 13);
         this.shake = Math.max(this.shake, 4);

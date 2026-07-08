@@ -443,16 +443,12 @@ export function assignApproach(state: GameState, aircraftId: number, runwayId: n
   const rw = findRunway(state, runwayId);
   if (!ac || !rw || !isAirborneArrival(ac)) return false;
   const re = rw.ends[end];
-  const corridorBusy = approachCountOnCorridor(state, runwayId, end, aircraftId) >= 1;
-  if (corridorBusy) {
-    state.events.push({ kind: 'corridorBusy', x: re.threshold.x, y: re.threshold.y, endName: re.name });
-  }
   ac.phase = 'approach';
   ac.assignedRunwayId = rw.id;
   ac.assignedEnd = end;
   ac.holdCenter = null;
   ac.waypoints = buildApproachWaypoints(re, ac);
-  if (!corridorBusy) state.events.push({ kind: 'assign', x: ac.x, y: ac.y });
+  state.events.push({ kind: 'assign', x: ac.x, y: ac.y });
   return true;
 }
 

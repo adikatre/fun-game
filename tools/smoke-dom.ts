@@ -137,9 +137,9 @@ try {
       check('first plane cleared to approach end 0', getGame().aircraft.find((x: any) => x.id === a.id)?.phase === 'approach');
       fireDrag({ x: b.x, y: b.y }, { x: rw.ends[0].threshold.x, y: rw.ends[0].threshold.y });
       const bPhase = getGame().aircraft.find((x: any) => x.id === b.id)?.phase;
-      check('second plane cleared to same corridor (with warning)', bPhase === 'approach');
+      check('second plane cleared to same corridor', bPhase === 'approach');
     } else {
-      check('corridor busy warning (not enough inbound to test)', true);
+      check('second plane to same corridor (not enough inbound to test)', true);
     }
   }
 
