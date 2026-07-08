@@ -107,7 +107,7 @@ function recordShift(): void {
     save('fa.best', best);
   }
   upgradeState.totalCashEarned += state.cash;
-  upgradeState.bankBalance += state.cash;
+  upgradeState.bankBalance = Math.max(0, upgradeState.bankBalance + state.cash);
   saveUpgradeState(upgradeState);
   
   // Record career stats

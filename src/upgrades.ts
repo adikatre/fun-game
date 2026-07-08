@@ -262,7 +262,7 @@ export function loadUpgradeState(): UpgradeState {
     return {
       purchased: new Set(data.purchased ?? []),
       totalCashEarned: data.totalCashEarned ?? 0,
-      bankBalance: data.bankBalance ?? 0,
+      bankBalance: Math.max(0, data.bankBalance ?? 0),
     };
   } catch {
     return createUpgradeState();
