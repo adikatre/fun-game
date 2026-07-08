@@ -34,6 +34,8 @@ export interface UpgradeState {
   bankBalance: number; // cash available for spending (carries over between shifts)
 }
 
+export type UpgradeAvailability = 'owned' | 'locked' | 'available' | 'unaffordable';
+
 export const UPGRADE_DEFS: UpgradeDef[] = [
   // --- Runways ---
   {
@@ -150,6 +152,10 @@ export const UPGRADE_DEFS: UpgradeDef[] = [
   },
 ];
 
+export function getUpgradeDef(id: UpgradeId): UpgradeDef | undefined {
+  return UPGRADE_DEFS.find((d) => d.id === id);
+}
+
 /** Create a fresh (empty) upgrade state. */
 export function createUpgradeState(): UpgradeState {
   return {
@@ -159,28 +165,44 @@ export function createUpgradeState(): UpgradeState {
   };
 }
 
-/** Check if an upgrade's prerequisites are met and player can afford it. */
-export function canPurchase(state: UpgradeState, id: UpgradeId): boolean {
-  if (state.purchased.has(id)) return false;
-  const def = UPGRADE_DEFS.find((d) => d.id === id);
-  if (!def) return false;
-  if (def.requires && !state.purchased.has(def.requires)) return false;
-  return state.bankBalance >= def.cost;
+export function upgradeAvailability(state: UpgradeState, id: UpgradeId): UpgradeAvailability {
+  if (state.purchased.has(id)) return 'owned';
+  const def = getUpgradeDef(id);
+  if (!def) return 'locked';
+  if (def.requires && !state.purchased.has(def.requires)) return 'locked';
+  return state.bankBalance >= def.cost ? 'available' : 'unaffordable';
 }
 
 /** Check if an upgrade is unlocked (prerequisites met) but maybe not affordable. */
 export function isUnlocked(state: UpgradeState, id: UpgradeId): boolean {
-  if (state.purchased.has(id)) return true;
-  const def = UPGRADE_DEFS.find((d) => d.id === id);
-  if (!def) return false;
-  if (def.requires && !state.purchased.has(def.requires)) return false;
-  return true;
+  const availability = upgradeAvailability(state, id);
+  return availability !== 'locked';
+}
+
+/** Check if an upgrade's prerequisites are met and player can afford it. */
+export function canPurchase(state: UpgradeState, id: UpgradeId): boolean {
+  return upgradeAvailability(state, id) === 'available';
+}
+
+export function purchaseBlockReason(state: UpgradeState, id: UpgradeId): string {
+  const def = getUpgradeDef(id);
+  const availability = upgradeAvailability(state, id);
+  if (availability === 'owned') return 'Already owned';
+  if (!def) return 'Upgrade unavailable';
+  if (availability === 'locked' && def.requires) {
+    const req = getUpgradeDef(def.requires);
+    return req ? `Requires ${req.name}` : 'Prerequisite missing';
+  }
+  if (availability === 'unaffordable') {
+    return `Need $${Math.max(0, def.cost - state.bankBalance).toLocaleString()} more`;
+  }
+  return '';
 }
 
 /** Purchase an upgrade. Returns true on success. */
 export function purchaseUpgrade(state: UpgradeState, id: UpgradeId): boolean {
   if (!canPurchase(state, id)) return false;
-  const def = UPGRADE_DEFS.find((d) => d.id === id)!;
+  const def = getUpgradeDef(id)!;
   state.bankBalance -= def.cost;
   state.purchased.add(id);
   return true;

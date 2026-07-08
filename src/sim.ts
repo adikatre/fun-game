@@ -25,6 +25,7 @@ import {
   fuelMultiplier,
   turnaroundMultiplier,
   hasWeatherRadar,
+  radarRangeMultiplier,
   createUpgradeState,
 } from './upgrades';
 
@@ -207,7 +208,7 @@ function emergencyChance(time: number, day: number): number {
   return lerp(0, CONFIG.emergencyChanceEnd, clamp01((time - diff.emergencyStartAt) / diff.rampDurationSeconds));
 }
 
-function makeAircraft(state: GameState, fuelMult: number): Aircraft {
+function makeAircraft(state: GameState, fuelMult: number, radarRangeMult: number): Aircraft {
   const rng = state.rng;
   // Spawn on a ring around the airport. Early traffic enters from the approach
   // side (east, angle ~0) within a narrow spread; the spread widens to all
@@ -220,7 +221,7 @@ function makeAircraft(state: GameState, fuelMult: number): Aircraft {
     ),
   );
   const ang = (rng.next() - 0.5) * 2 * spread; // centered on east
-  const radius = 1000;
+  const radius = 1000 * radarRangeMult;
   let x = CONFIG.airportX + Math.cos(ang) * radius;
   let y = CONFIG.airportY + Math.sin(ang) * radius;
   x = Math.max(18, Math.min(CONFIG.worldW - 18, x));
@@ -1177,6 +1178,7 @@ export function update(state: GameState, dt: number, upgradeState: UpgradeState 
   const fuelMult = fuelMultiplier(upgradeState);
   const turnaroundMult = turnaroundMultiplier(upgradeState);
   const hasRadar = hasWeatherRadar(upgradeState);
+  const radarRangeMult = radarRangeMultiplier(upgradeState);
 
   // --- weather ---
   updateWeather(state, dt, hasRadar);
@@ -1187,7 +1189,7 @@ export function update(state: GameState, dt: number, upgradeState: UpgradeState 
     state.events.push({ kind: 'finalRush' });
     for (let k = 0; k < CONFIG.finalRushSize; k++) {
       if (state.aircraft.length < CONFIG.maxAirborneCap) {
-        state.aircraft.push(makeAircraft(state, fuelMult));
+        state.aircraft.push(makeAircraft(state, fuelMult, radarRangeMult));
         state.totalSpawned += 1;
       }
     }
@@ -1204,7 +1206,7 @@ export function update(state: GameState, dt: number, upgradeState: UpgradeState 
   while (state.spawnAccumulator >= state.nextSpawnInterval) {
     state.spawnAccumulator -= state.nextSpawnInterval;
     if (state.aircraft.length < maxAirborne(state.time, state.day)) {
-      state.aircraft.push(makeAircraft(state, fuelMult));
+      state.aircraft.push(makeAircraft(state, fuelMult, radarRangeMult));
       state.totalSpawned += 1;
     }
     state.nextSpawnInterval = spawnInterval(state);
@@ -1214,7 +1216,7 @@ export function update(state: GameState, dt: number, upgradeState: UpgradeState 
     state.events.push({ kind: 'rush' });
     for (let k = 0; k < diff.rushWaveSize; k++) {
       if (state.aircraft.length < CONFIG.maxAirborneCap) {
-        state.aircraft.push(makeAircraft(state, fuelMult));
+        state.aircraft.push(makeAircraft(state, fuelMult, radarRangeMult));
         state.totalSpawned += 1;
       }
     }

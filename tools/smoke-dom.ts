@@ -3,8 +3,9 @@
 // mouse/keyboard input without throwing.
 //
 // Import order matters: fakedom installs globals BEFORE main.ts runs.
-import { drive, fireClick, fireDrag, fireKey, fireRightClick, fireScreenClick, getGame, worldToScreen } from './fakedom';
+import { drive, fireClick, fireDrag, fireKey, fireRightClick, fireScreenClick, getGame, getStorageItem, worldToScreen } from './fakedom';
 import '../src/main';
+import { loadUpgradeState, upgradeAvailability } from '../src/upgrades';
 
 let failures = 0;
 function check(label: string, cond: boolean): void {
@@ -188,14 +189,32 @@ try {
   check('shift timer ends in debrief or fired', getGame().status === 'debrief' || getGame().status === 'fired');
   check('a grade was assigned', typeof getGame().grade === 'string');
 
-  // debrief: left button is UPGRADES & NEXT; fired: TRY AGAIN is centered
-  const endStatus = getGame().status;
-  if (endStatus === 'debrief') {
-    fireScreenClick({ x: 1280 / 2 - 220 - 12 + 110, y: 800 / 2 + 132 + 27 });
-  } else {
-    fireScreenClick({ x: 1280 / 2, y: 800 / 2 + 132 + 27 });
+  // Exercise the between-shift upgrade path even if the controller got fired.
+  if (getGame().status !== 'debrief') {
+    getGame().status = 'debrief';
+    getGame().grade = 'C';
   }
-  check('end screen advances (upgrade or retry)', getGame().status === 'playing' || getGame().status === 'upgrade');
+  const beforeShop = loadUpgradeState();
+  const dayBeforeShop = getGame().day;
+  check('radar range starts purchasable in seeded shop', upgradeAvailability(beforeShop, 'radar_range_1') === 'available');
+  check('radar range II starts locked behind radar range I', upgradeAvailability(beforeShop, 'radar_range_2') === 'locked');
+
+  // Debrief left button opens the shop; it no longer also claims to advance the day.
+  fireScreenClick({ x: 1280 / 2 - 220 - 12 + 110, y: 800 / 2 + 132 + 27 });
+  check('debrief opens upgrade shop', getGame().status === 'upgrade');
+
+  // Click Radar Range I in the first section of the shop.
+  const bankBeforePurchase = loadUpgradeState().bankBalance;
+  fireScreenClick({ x: 1280 / 2, y: 370 });
+  const afterPurchase = loadUpgradeState();
+  const rawUpgrades = getStorageItem('fa.upgrades');
+  check('upgrade purchase persisted to storage', !!rawUpgrades && JSON.parse(rawUpgrades).purchased.includes('radar_range_1'));
+  check('purchase deducts from bank', afterPurchase.bankBalance === bankBeforePurchase - 1000);
+  check('purchased upgrade reports owned', upgradeAvailability(afterPurchase, 'radar_range_1') === 'owned');
+  check('dependent upgrade is no longer locked', upgradeAvailability(afterPurchase, 'radar_range_2') !== 'locked');
+
+  fireScreenClick({ x: 1280 / 2, y: 800 - 80 + 27 });
+  check('shop done starts next shift', getGame().status === 'playing' && getGame().day === dayBeforeShop + 1);
 } catch (e: any) {
   console.error('\nERROR:', e.stack);
   failures++;

@@ -5,10 +5,10 @@ import { UPGRADE_DEFS, type UpgradeId, type UpgradeState } from './upgrades';
 import { measureWrappedLines } from './text';
 
 export const TIER_DEFS: { label: string; ids: UpgradeId[] }[] = [
-  { label: 'TIER 1 — STARTER UPGRADES', ids: ['runway_2', 'gates_1', 'radar_range_1', 'fuel_reserves', 'fast_turnaround_1'] },
-  { label: 'TIER 2 — ADVANCED', ids: ['gates_2', 'radar_range_2', 'fast_turnaround_2', 'weather_radar'] },
-  { label: 'TIER 3 — EXPANSION', ids: ['runway_4', 'gates_3'] },
-  { label: 'TIER 4 — ULTIMATE', ids: ['runway_5'] },
+  { label: 'STARTER UPGRADES', ids: ['runway_2', 'gates_1', 'radar_range_1', 'fuel_reserves', 'fast_turnaround_1'] },
+  { label: 'ADVANCED SYSTEMS', ids: ['gates_2', 'radar_range_2', 'fast_turnaround_2', 'weather_radar'] },
+  { label: 'AIRPORT EXPANSION', ids: ['runway_4', 'gates_3'] },
+  { label: 'ULTIMATE CAPACITY', ids: ['runway_5'] },
 ];
 
 export const UPGRADE_HEADER_H = 110;

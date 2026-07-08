@@ -7,7 +7,7 @@ import type { Fx } from './fx';
 import { approachCountOnCorridor } from './sim';
 import { AIRBORNE_PHASES } from './types';
 import type { Aircraft, CareerStats, GameState, RenderHints, Runway, Viewport, Vec } from './types';
-import { UPGRADE_DEFS, isUnlocked, canPurchase } from './upgrades';
+import { UPGRADE_DEFS, purchaseBlockReason, upgradeAvailability } from './upgrades';
 import { TIER_DEFS, UPGRADE_HEADER_H, UPGRADE_BOTTOM_BAR_H, upgradeCardWidth, upgradeCardHeight } from './upgrade-layout';
 import { drawFittedText, drawFittedTextLeft, drawWrappedText, measureWrappedLines, truncateText } from './text';
 import { endButtons, hudButtons, upgradeButtons, menuButtons, statsButtons, settingsButtons, floatingButtons, pauseButtons, pauseMenuRect, type UiButton, type UiContext } from './ui';
@@ -1268,13 +1268,9 @@ function drawUpgradeScreen(ctx: CanvasRenderingContext2D, _state: GameState, vp:
 
   for (let ti = 0; ti < TIER_DEFS.length; ti++) {
     const tier = TIER_DEFS[ti];
-    const tierLocked = ti > 0 && TIER_DEFS.slice(0, ti).some((prev) =>
-      prev.ids.some((id) => !ups.purchased.has(id)),
-    );
 
     const thY = yy;
     ctx.save();
-    if (tierLocked) ctx.globalAlpha = 0.45;
     roundRectPath(ctx, cx - cardW / 2, thY, cardW, tierHeaderH, 8);
     ctx.fillStyle = MENU_PALETTE.tierHeader;
     ctx.fill();
@@ -1286,27 +1282,27 @@ function drawUpgradeScreen(ctx: CanvasRenderingContext2D, _state: GameState, vp:
     ctx.textBaseline = 'middle';
     ctx.fillStyle = MENU_PALETTE.textSecondary;
     ctx.font = '700 13px Inter, system-ui, sans-serif';
-    const tierLabel = tierLocked ? `🔒 ${tier.label}` : tier.label;
-    ctx.fillText(truncateText(ctx, tierLabel, cardW - 32), cx - cardW / 2 + 16, thY + tierHeaderH / 2);
-    if (tierLocked) ctx.restore();
+    ctx.fillText(truncateText(ctx, tier.label, cardW - 32), cx - cardW / 2 + 16, thY + tierHeaderH / 2);
+    ctx.restore();
     yy += tierHeaderH + cardGap;
 
     for (const id of tier.ids) {
       const def = UPGRADE_DEFS.find((d) => d.id === id);
       if (!def) continue;
 
-      const purchased = ups.purchased.has(def.id);
-      const unlocked = isUnlocked(ups, def.id);
-      const affordable = canPurchase(ups, def.id);
+      const availability = upgradeAvailability(ups, def.id);
+      const purchased = availability === 'owned';
+      const locked = availability === 'locked';
+      const available = availability === 'available';
       const hovered = hints.hoverUpgradeId === def.id;
       const cardH = upgradeCardHeight(ctx, cardW, def.description);
       const cardX = cx - cardW / 2;
       const cardY = yy;
 
       ctx.save();
-      if (tierLocked) ctx.globalAlpha = 0.35;
+      if (locked) ctx.globalAlpha = 0.55;
 
-      if (hovered && !purchased && !tierLocked) {
+      if (hovered && !purchased && !locked) {
         ctx.shadowColor = MENU_PALETTE.cardShadowHover;
         ctx.shadowBlur = 14;
         ctx.shadowOffsetY = 4;
@@ -1318,7 +1314,7 @@ function drawUpgradeScreen(ctx: CanvasRenderingContext2D, _state: GameState, vp:
       roundRectPath(ctx, cardX, cardY, cardW, cardH, 10);
       ctx.fillStyle = purchased
         ? MENU_PALETTE.successBg
-        : hovered && !tierLocked
+        : hovered && !locked
           ? MENU_PALETTE.cardHover
           : MENU_PALETTE.card;
       ctx.fill();
@@ -1326,7 +1322,7 @@ function drawUpgradeScreen(ctx: CanvasRenderingContext2D, _state: GameState, vp:
       ctx.shadowOffsetY = 0;
 
       ctx.lineWidth = purchased ? 2 : 1;
-      ctx.strokeStyle = purchased ? MENU_PALETTE.success : affordable ? MENU_PALETTE.accent : MENU_PALETTE.cardBorder;
+      ctx.strokeStyle = purchased ? MENU_PALETTE.success : available ? MENU_PALETTE.accent : MENU_PALETTE.cardBorder;
       ctx.stroke();
 
       ctx.font = '28px Inter, system-ui, sans-serif';
@@ -1337,7 +1333,7 @@ function drawUpgradeScreen(ctx: CanvasRenderingContext2D, _state: GameState, vp:
       ctx.textAlign = 'left';
       ctx.textBaseline = 'alphabetic';
       ctx.font = '700 14px Inter, system-ui, sans-serif';
-      ctx.fillStyle = purchased ? MENU_PALETTE.success : !unlocked || tierLocked ? MENU_PALETTE.textDim : MENU_PALETTE.text;
+      ctx.fillStyle = purchased ? MENU_PALETTE.success : locked ? MENU_PALETTE.textDim : MENU_PALETTE.text;
       drawFittedTextLeft(ctx, def.name, cardX + textLeft, cardY + 22, textMaxW, 14, 11);
       ctx.font = '400 11.5px Inter, system-ui, sans-serif';
       ctx.fillStyle = MENU_PALETTE.textDim;
@@ -1349,12 +1345,18 @@ function drawUpgradeScreen(ctx: CanvasRenderingContext2D, _state: GameState, vp:
         ctx.fillStyle = MENU_PALETTE.success;
         ctx.font = '700 14px Inter, system-ui, sans-serif';
         ctx.fillText('✓ OWNED', cardX + cardW - 18, cardY + cardH / 2);
-      } else if (!unlocked || tierLocked) {
+      } else if (locked) {
         ctx.fillStyle = MENU_PALETTE.textDim;
         ctx.font = '500 12px Inter, system-ui, sans-serif';
-        ctx.fillText('🔒 LOCKED', cardX + cardW - 18, cardY + cardH / 2);
+        ctx.fillText(truncateText(ctx, purchaseBlockReason(ups, def.id), rightColW - 8), cardX + cardW - 18, cardY + cardH / 2);
+      } else if (availability === 'unaffordable') {
+        ctx.fillStyle = MENU_PALETTE.danger;
+        ctx.font = '700 12px Inter, system-ui, sans-serif';
+        ctx.fillText('NOT ENOUGH $', cardX + cardW - 18, cardY + cardH / 2 - 8);
+        ctx.font = '800 16px Inter, system-ui, sans-serif';
+        ctx.fillText(truncateText(ctx, `$${def.cost.toLocaleString()}`, rightColW - 8), cardX + cardW - 18, cardY + cardH / 2 + 10);
       } else {
-        ctx.fillStyle = affordable ? MENU_PALETTE.success : MENU_PALETTE.danger;
+        ctx.fillStyle = MENU_PALETTE.success;
         ctx.font = '800 16px Inter, system-ui, sans-serif';
         ctx.fillText(truncateText(ctx, `$${def.cost.toLocaleString()}`, rightColW - 8), cardX + cardW - 18, cardY + cardH / 2);
       }

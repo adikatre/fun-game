@@ -220,6 +220,7 @@ export function createInput(ctx: InputContext): InputController {
         break;
       case 'primary':
         if (state.status === 'debrief') {
+          shopScrollY = 0;
           actions.showUpgrades();
         } else if (FULL_LAUNCH) {
           sdk.requestMidgameAd(() => { actions.nextShift(); }, () => {});
@@ -498,7 +499,8 @@ export function createInput(ctx: InputContext): InputController {
   function onWheel(e: WheelEvent): void {
     const state = getState();
     if (state.status === 'upgrade') {
-      shopScrollY -= e.deltaY;
+      e.preventDefault();
+      shopScrollY += e.deltaY;
       const maxScroll = upgradeScrollMax(measureCtx(), getViewport(), actions.getUpgrades());
       shopScrollY = Math.max(0, Math.min(maxScroll, shopScrollY));
     }
@@ -624,7 +626,7 @@ export function createInput(ctx: InputContext): InputController {
   window.addEventListener('pointermove', onPointerMove as EventListener);
   window.addEventListener('pointerup', onPointerUp as EventListener);
   canvas.addEventListener('contextmenu', onContextMenu);
-  canvas.addEventListener('wheel', onWheel, { passive: true });
+  canvas.addEventListener('wheel', onWheel, { passive: false });
   window.addEventListener('keydown', onKeyDown);
 
   return {

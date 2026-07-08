@@ -91,6 +91,9 @@ export class Fx {
       case 'purchase':
         this.showBanner('UPGRADE PURCHASED', e.upgradeId, PALETTE.cash, 1.8);
         break;
+      case 'purchaseFailed':
+        this.showBanner('UPGRADE UNAVAILABLE', e.reason, PALETTE.warn, 1.5);
+        break;
       default:
         break;
     }

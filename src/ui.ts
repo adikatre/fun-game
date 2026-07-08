@@ -135,7 +135,7 @@ export function endButtons(vp: Viewport, state: GameState): UiButton[] {
   const btns: UiButton[] = [];
 
   if (status === 'debrief') {
-    btns.push({ id: 'primary', label: 'UPGRADES & NEXT →', x: vp.cssW / 2 - w - 12, y: cy, w, h });
+    btns.push({ id: 'primary', label: 'VISIT UPGRADES', x: vp.cssW / 2 - w - 12, y: cy, w, h });
     btns.push({ id: 'retry', label: 'RETRY SHIFT', x: vp.cssW / 2 + 12, y: cy, w, h });
     // Ads are disabled during Basic Launch, so only surface the CTA in Full Launch.
     if (FULL_LAUNCH && !state.adDoubleUsed && window.CrazyGames) {
@@ -156,7 +156,7 @@ export function upgradeButtons(vp: Viewport): UiButton[] {
   const w = 240;
   const h = 54;
   return [
-    { id: 'shop_done', label: 'START NEXT SHIFT →', x: vp.cssW / 2 - w / 2, y: vp.cssH - 80, w, h },
+    { id: 'shop_done', label: 'START NEXT SHIFT', x: vp.cssW / 2 - w / 2, y: vp.cssH - 80, w, h },
   ];
 }
 

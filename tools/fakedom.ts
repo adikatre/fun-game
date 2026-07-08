@@ -61,14 +61,20 @@ g.requestAnimationFrame = (cb: (now: number) => void) => {
   rafCb = cb;
   return 1;
 };
+const storageData: Record<string, string> = {
+  'fa.upgrades': JSON.stringify({ purchased: ['runway_2', 'gates_1'], bankBalance: 1500, totalCashEarned: 1500 }),
+};
 g.localStorage = {
-  getItem: (key: string) => {
-    if (key === 'fa.upgrades') {
-      return JSON.stringify({ purchased: ['runway_2', 'gates_1'], bankBalance: 1500, totalCashEarned: 1500 });
-    }
-    return null;
+  getItem: (key: string) => storageData[key] ?? null,
+  setItem: (key: string, value: string) => {
+    storageData[key] = value;
   },
-  setItem: () => {},
+  removeItem: (key: string) => {
+    delete storageData[key];
+  },
+  clear: () => {
+    for (const key of Object.keys(storageData)) delete storageData[key];
+  },
 };
 
 let nowMs = 0;
@@ -96,6 +102,10 @@ export function worldToScreen(wx: number, wy: number): { x: number; y: number } 
 
 export function getGame(): any {
   return g.window.__atc.state;
+}
+
+export function getStorageItem(key: string): string | null {
+  return storageData[key] ?? null;
 }
 
 const ev = (p: { x: number; y: number }, button = 0) => ({

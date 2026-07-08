@@ -12,7 +12,7 @@ import { sdk, storage } from './sdk';
 import { commandToRunway, createGame, startShift, update, authorizeCrossing } from './sim';
 import { loadCareerStats, saveCareerStats, recordShiftStats, createCareerStats, resetAllCareerData } from './stats';
 import type { GameState, Viewport } from './types';
-import { createUpgradeState, loadUpgradeState, saveUpgradeState, purchaseUpgrade as doPurchase } from './upgrades';
+import { createUpgradeState, loadUpgradeState, saveUpgradeState, purchaseBlockReason, purchaseUpgrade as doPurchase } from './upgrades';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d', { alpha: false })!;
@@ -150,6 +150,9 @@ const input = createInput({
         saveUpgradeState(upgradeState);
         state.events.push({ kind: 'purchase', upgradeId: id });
         audio.uiClick();
+      } else {
+        state.events.push({ kind: 'purchaseFailed', reason: purchaseBlockReason(upgradeState, id as any) });
+        audio.uiClick();
       }
     },
     authorizeCross: (id: number) => {
@@ -258,7 +261,20 @@ const input = createInput({
           // Success: double cash
           isAdPlaying = false;
           audio.setMuted(prevMute);
-          state.cash *= 2;
+          const bonus = Math.max(0, state.cash);
+          state.cash += bonus;
+          if (bonus > 0) {
+            upgradeState.totalCashEarned += bonus;
+            upgradeState.bankBalance = Math.max(0, upgradeState.bankBalance + bonus);
+            saveUpgradeState(upgradeState);
+            careerStats.lifetimeEarnings += bonus;
+            if (state.cash > careerStats.bestCash) careerStats.bestCash = state.cash;
+            saveCareerStats(careerStats);
+            if (state.cash > best) {
+              best = state.cash;
+              save('fa.best', best);
+            }
+          }
           state.adDoubleUsed = true;
         },
         () => {

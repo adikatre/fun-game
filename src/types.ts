@@ -172,7 +172,8 @@ export type GameEvent =
   | { kind: 'finalRush' }
   | { kind: 'shiftEnd'; grade: Grade }
   | { kind: 'fired' }
-  | { kind: 'purchase'; upgradeId: string };
+  | { kind: 'purchase'; upgradeId: string }
+  | { kind: 'purchaseFailed'; reason: string };
 
 /** A predicted loss of separation (amber warning) for the renderer. */
 export interface PredictedConflict {
