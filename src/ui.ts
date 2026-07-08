@@ -53,7 +53,7 @@ export function planeActionSpecs(ui: UiContext): PlaneActionSpec[] {
     return [{ id: 'takeoff', label: 'TAKEOFF', floatW: 80, hudW: 100 }];
   }
   if (ui.selectedWaitCross) {
-    return [{ id: 'cross', label: '✈ CROSS', floatW: 80, hudW: 100 }];
+    return [{ id: 'cross', label: 'CROSS', floatW: 80, hudW: 100 }];
   }
   const specs: PlaneActionSpec[] = [];
   if (ui.selectedAirborne) {

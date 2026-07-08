@@ -1762,6 +1762,25 @@ function drawSettingsScreen(ctx: CanvasRenderingContext2D, vp: Viewport, hints: 
   void nowSec;
 }
 
+/** Small runway-intersection mark for the CROSS authorization button. */
+function drawCrossingIcon(ctx: CanvasRenderingContext2D, cx: number, cy: number, color: string): void {
+  const len = 6;
+  const arm = 4;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(cx - len, cy);
+  ctx.lineTo(cx + len, cy);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - arm);
+  ctx.lineTo(cx, cy + arm);
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawButtons(
   ctx: CanvasRenderingContext2D,
   state: GameState,
@@ -1833,7 +1852,13 @@ function drawButtons(
       ctx.fillStyle = primary ? PALETTE.blip : PALETTE.text;
       const basePx = b.h >= 50 ? 15 : 12;
       ctx.font = `700 ${basePx}px Inter, system-ui, sans-serif`;
-      drawFittedText(ctx, b.label, b.x + b.w / 2, b.y + b.h / 2 + 1, b.w - 24, basePx, 10);
+      const cy = b.y + b.h / 2 + 1;
+      if (b.id === 'cross') {
+        drawCrossingIcon(ctx, b.x + b.w / 2 - 22, cy, PALETTE.holdShort);
+        drawFittedText(ctx, b.label, b.x + b.w / 2 + 8, cy, b.w - 36, basePx, 10);
+      } else {
+        drawFittedText(ctx, b.label, b.x + b.w / 2, cy, b.w - 24, basePx, 10);
+      }
     }
   }
 }
