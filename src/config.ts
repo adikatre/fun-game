@@ -229,6 +229,7 @@ export const PALETTE = {
 
   // panels / UI
   panel: 'rgba(255,255,255,0.88)',
+  hudPanel: 'rgba(255,255,255,0.15)',
   panelEdge: 'rgba(100,120,160,0.2)',
   panelShadow: 'rgba(0,0,0,0.08)',
 

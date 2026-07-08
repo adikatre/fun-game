@@ -10,7 +10,7 @@ import type { Aircraft, CareerStats, GameState, RenderHints, Runway, Viewport, V
 import { UPGRADE_DEFS, isUnlocked, canPurchase } from './upgrades';
 import { TIER_DEFS, UPGRADE_HEADER_H, UPGRADE_BOTTOM_BAR_H, upgradeCardWidth, upgradeCardHeight } from './upgrade-layout';
 import { drawFittedText, drawFittedTextLeft, drawWrappedText, measureWrappedLines, truncateText } from './text';
-import { endButtons, hudButtons, upgradeButtons, menuButtons, statsButtons, settingsButtons, floatingButtons, type UiButton, type UiContext } from './ui';
+import { endButtons, hudButtons, upgradeButtons, menuButtons, statsButtons, settingsButtons, floatingButtons, pauseButtons, pauseMenuRect, type UiButton, type UiContext } from './ui';
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
@@ -62,7 +62,9 @@ export function visibleButtons(state: GameState, vp: Viewport, hints: RenderHint
   if (state.status === 'upgrade') return upgradeButtons(vp);
   if (state.status === 'menu') return menuButtons(vp);
   if (state.status === 'stats') return statsButtons(vp);
-  if (state.status === 'settings') return settingsButtons(vp, (hints as any).confirmingReset ?? false);
+  if (state.status === 'settings') return settingsButtons(vp, hints.confirmingReset ?? false, hints.muted);
+  // the pause menu is modal: while it is up, it owns every button on screen
+  if (state.status === 'playing' && state.paused) return pauseButtons(vp, hints.restartArmed ?? false, hints.muted);
   const uictx = uiContext(state, hints, vp, alpha);
   return [...hudButtons(vp, uictx), ...endButtons(vp, state), ...floatingButtons(vp, uictx)];
 }
@@ -120,8 +122,9 @@ export function render(
     drawInboundStrip(ctx, state, vp, hints);
     drawHelp(ctx, vp);
     drawBanner(ctx, fx, vp, nowSec);
-    if (state.showHint) drawHint(ctx, vp);
-    else if (state.paused) drawPausedBanner(ctx, vp);
+    if (state.paused) drawPauseMenu(ctx, vp);
+    else if (hints.restartArmed) drawRestartToast(ctx, vp);
+    else if (state.showHint) drawHint(ctx, vp);
   }
 
   if (state.status === 'tutorial') drawTutorial(ctx, state, vp, hints, nowSec);
@@ -501,13 +504,15 @@ function drawAircraft(
   else if (isGroundArrival) color = PALETTE.blipDim;
   else if (isWaiting) color = PALETTE.holdShort;
 
-  // selection / emergency rings
+  // selection / emergency rings (selected reads stronger than a mere hover)
   if (selected || hover) {
     ctx.strokeStyle = PALETTE.selected;
-    ctx.lineWidth = 2;
+    ctx.lineWidth = selected ? 2.5 : 1.5;
+    if (!selected) ctx.globalAlpha = 0.45;
     ctx.beginPath();
     ctx.arc(x, y, 18, 0, Math.PI * 2);
     ctx.stroke();
+    ctx.globalAlpha = 1;
   }
   if (emerg) {
     ctx.strokeStyle = ac.emergency === 'medical' ? PALETTE.danger : PALETTE.warn;
@@ -707,7 +712,7 @@ function drawHud(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewport, 
   ctx.shadowBlur = 10;
   ctx.shadowOffsetY = 3;
   roundRectPath(ctx, 8, 8, vp.cssW - 16, 62, 12);
-  ctx.fillStyle = PALETTE.panel;
+  ctx.fillStyle = PALETTE.hudPanel;
   ctx.fill();
   ctx.shadowBlur = 0;
   ctx.shadowOffsetY = 0;
@@ -892,7 +897,7 @@ function drawHelp(ctx: CanvasRenderingContext2D, vp: Viewport): void {
     'Drag a plane to a runway side: land / take off there',
     'One approach per runway side — HOLD extras (right-click or HOLD button)',
     'Landed planes taxi to a gate, turn around, go green = ready',
-    'Tap waiting planes to authorize runway crossing · Space: pause',
+    'Tap waiting planes to authorize runway crossing · Space / Esc: pause',
   ];
   const maxW = vp.cssW - 36;
   const lineH = 16;
@@ -935,7 +940,7 @@ function drawHint(ctx: CanvasRenderingContext2D, vp: Viewport): void {
     { text: 'Drag a plane to a runway side to clear it to land.', font: `400 ${13 * s}px Inter, system-ui, sans-serif`, color: PALETTE.text },
     { text: "Stacking a corridor is risky — you'll get a warning if another plane is on approach.", font: `400 ${13 * s}px Inter, system-ui, sans-serif`, color: PALETTE.text },
     { text: 'HOLD the rest: right-click a plane, or select it and tap HOLD.', font: `400 ${12 * s}px Inter, system-ui, sans-serif`, color: PALETTE.textDim },
-    { text: "Keep them apart · watch fuel · Space pauses but commands still work.", font: `400 ${12 * s}px Inter, system-ui, sans-serif`, color: PALETTE.textDim },
+    { text: 'Keep them apart · watch fuel · Space or Esc pauses.', font: `400 ${12 * s}px Inter, system-ui, sans-serif`, color: PALETTE.textDim },
   ];
   const lineH = 18 * s;
   const padY = 26;
@@ -960,7 +965,20 @@ function drawHint(ctx: CanvasRenderingContext2D, vp: Viewport): void {
   }
 }
 
-function drawPausedBanner(ctx: CanvasRenderingContext2D, vp: Viewport): void {
+function drawPauseMenu(ctx: CanvasRenderingContext2D, vp: Viewport): void {
+  // modal: dim the whole scene, then a centered card (buttons drawn by drawButtons)
+  ctx.fillStyle = 'rgba(232,240,254,0.72)';
+  ctx.fillRect(0, 0, vp.cssW, vp.cssH);
+  const card = pauseMenuRect(vp);
+  panelCard(ctx, card.x, card.y, card.w, card.h);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = PALETTE.text;
+  ctx.font = '900 26px Inter, system-ui, sans-serif';
+  ctx.fillText('PAUSED', vp.cssW / 2, card.y + 48);
+}
+
+function drawRestartToast(ctx: CanvasRenderingContext2D, vp: Viewport): void {
   const w = Math.min(340, vp.cssW - 24);
   const h = 38;
   const x = vp.cssW / 2 - w / 2;
@@ -975,7 +993,7 @@ function drawPausedBanner(ctx: CanvasRenderingContext2D, vp: Viewport): void {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.font = '600 13px Inter, system-ui, sans-serif';
-  drawFittedText(ctx, 'PAUSED — clear / dispatch / hold / speed freely', vp.cssW / 2, y + h / 2 + 1, w - 16, 13, 10);
+  drawFittedText(ctx, 'press R again to restart the shift', vp.cssW / 2, y + h / 2 + 1, w - 16, 13, 10);
 }
 
 function drawTutorial(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewport, hints: RenderHints, nowSec: number): void {
@@ -1021,7 +1039,7 @@ function drawTutorial(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewp
     ['GREEN planes are boarded', 'drag them to a runway to launch'],
     ['TAP a plane holding short', 'to authorize it across a runway'],
     ['CLICK an airborne plane', 'ABORT to go around'],
-    ['SPACE', 'pause — you can still give commands'],
+    ['SPACE / ESC', 'pause the shift'],
     ['TWO crashes ends your shift', 'keep them apart · watch the fuel'],
   ];
   let y = cy - 28;
@@ -1069,7 +1087,8 @@ function drawTutorial(ctx: CanvasRenderingContext2D, state: GameState, vp: Viewp
   ctx.globalAlpha = pulse;
   ctx.fillStyle = PALETTE.blip;
   ctx.font = `700 ${15 * s}px Inter, system-ui, sans-serif`;
-  drawFittedText(ctx, 'CLICK ANYWHERE TO START YOUR SHIFT', cx, y + 30, cardW - 32, 15 * s, 11);
+  const footer = hints.tutorialReadOnly ? 'CLICK ANYWHERE TO RETURN TO MENU' : 'CLICK ANYWHERE TO START YOUR SHIFT';
+  drawFittedText(ctx, footer, cx, y + 30, cardW - 32, 15 * s, 11);
   ctx.globalAlpha = 1;
 }
 
@@ -1793,7 +1812,7 @@ function drawButtons(
       ctx.restore();
     } else {
       // original in-game button style
-      const primary = b.id === 'primary' || b.id === 'shop_done';
+      const primary = b.id === 'primary' || b.id === 'shop_done' || b.id === 'pause_resume';
 
       ctx.shadowColor = PALETTE.panelShadow;
       ctx.shadowBlur = 6;

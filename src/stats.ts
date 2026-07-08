@@ -69,13 +69,13 @@ export function loadCareerStats(): CareerStats {
   }
 }
 
-/** Wipe all career stats (for Settings reset). */
+/** Wipe all career progress (for Settings reset). Audio settings and the
+ * seen-tutorial flag are preferences, not progress, so they survive a reset. */
 export function resetAllCareerData(): void {
   try {
     storage.removeItem(STORAGE_KEY);
     storage.removeItem('fa.day');
     storage.removeItem('fa.best');
     storage.removeItem('fa.upgrades');
-    storage.removeItem('fa.volume');
   } catch { /* ignore */ }
 }

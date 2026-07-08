@@ -9,8 +9,8 @@ backend. A deterministic fixed-timestep sim (`sim.ts`) drives everything; render
 and input are side-effect-free consumers. The production build is a **single
 self-contained `dist/index.html`** (JS, CSS, fonts, and audio inlined).
 
-Session flow: `menu` → `tutorial` (how to play) → `playing` (6-min shift) →
-`debrief` / `fired` → `upgrade` shop → next day.
+Session flow: `menu` → `tutorial` (first run only; HOW TO PLAY revisits it) →
+`playing` (6-min shift) → `debrief` / `fired` → `upgrade` shop → next day.
 
 ## Setup & commands
 
@@ -38,8 +38,9 @@ URL query aids: `?seed=<n>` (reproducible run), `?autoplay=1`, `?ff=<seconds>`.
    `input.ts`. No game logic in render.
 4. **Shared UI layout** — on-screen button hit targets live in `ui.ts` and are
    used by both `render.ts` and `input.ts` so visuals and clicks stay aligned.
-5. **Pause-to-replan** — when paused, sim time freezes but all player commands
-   (clear, dispatch, hold, abort) remain live.
+5. **Modal pause** — pausing freezes sim time and opens the pause menu
+   (resume / restart / sound / quit to menu); gameplay input is captured
+   until the player resumes.
 6. **Headless safety** — `audio.ts`, `music.ts`, and `ambience.ts` no-op until a
    real `AudioContext` exists and the user has gestured (`audio.unlock()`).
 

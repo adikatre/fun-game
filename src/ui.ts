@@ -9,6 +9,8 @@ export type ButtonId =
   | 'go_around'
   | 'speed_slower' | 'speed_faster'
   | 'taxi_hold' | 'taxi_continue' | 'takeoff'
+  // pause menu
+  | 'pause_resume' | 'pause_restart' | 'pause_sound' | 'pause_quit'
   // menu
   | 'menu_play' | 'menu_stats' | 'menu_settings' | 'menu_tutorial'
   // stats
@@ -90,9 +92,36 @@ export function hudButtons(vp: Viewport, ui: UiContext): UiButton[] {
     btns.push({ id, label, x, y, w, h });
     x -= pad;
   };
-  add('mute', ui.muted ? '🔇 OFF' : '🔊 ON', 90);
+  add('mute', ui.muted ? '🔇 SOUND OFF' : '🔊 SOUND ON', 120);
   add('pause', ui.paused ? '▶ RESUME' : '⏸ PAUSE', 110);
   for (const spec of planeActionSpecs(ui)) add(spec.id, spec.label, spec.hudW);
+  return btns;
+}
+
+/** Pause menu card geometry (render draws the card, buttons live inside it). */
+export function pauseMenuRect(vp: Viewport): Rect {
+  const w = Math.min(320, vp.cssW - 48);
+  const h = 320;
+  return { x: vp.cssW / 2 - w / 2, y: vp.cssH / 2 - h / 2, w, h };
+}
+
+/** Modal pause menu buttons (shown while a shift is paused). */
+export function pauseButtons(vp: Viewport, restartArmed: boolean, muted: boolean): UiButton[] {
+  const card = pauseMenuRect(vp);
+  const bw = card.w - 56;
+  const bh = 46;
+  const gap = 12;
+  const x = card.x + (card.w - bw) / 2;
+  let y = card.y + 74;
+  const btns: UiButton[] = [];
+  const add = (id: ButtonId, label: string) => {
+    btns.push({ id, label, x, y, w: bw, h: bh });
+    y += bh + gap;
+  };
+  add('pause_resume', '▶ RESUME');
+  add('pause_restart', restartArmed ? 'RESTART — ARE YOU SURE?' : '⟲ RESTART SHIFT');
+  add('pause_sound', muted ? '🔇 SOUND OFF' : '🔊 SOUND ON');
+  add('pause_quit', '✕ QUIT TO MENU');
   return btns;
 }
 
@@ -159,7 +188,7 @@ export function statsButtons(vp: Viewport): UiButton[] {
 }
 
 /** Settings screen buttons. */
-export function settingsButtons(vp: Viewport, confirmingReset: boolean): UiButton[] {
+export function settingsButtons(vp: Viewport, confirmingReset: boolean, muted: boolean): UiButton[] {
   const btns: UiButton[] = [];
   const cx = vp.cssW / 2;
 
@@ -177,7 +206,7 @@ export function settingsButtons(vp: Viewport, confirmingReset: boolean): UiButto
   const muteH = 30;
   btns.push({
     id: 'settings_mute',
-    label: 'MUTE',
+    label: muted ? 'UNMUTE' : 'MUTE',
     x: volCardX + volCardW - 24 - muteW,
     y: volCardY + 12,
     w: muteW,

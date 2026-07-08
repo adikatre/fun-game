@@ -47,6 +47,7 @@ function save(key: string, value: number | string): void {
 
 let day = Math.max(1, Math.floor(loadNum('fa.day', 1)));
 let best = loadNum('fa.best', 0);
+let seenTutorial = loadNum('fa.seenTutorial', 0) === 1;
 const audio = new AudioEngine(loadNum('fa.muted', 0) === 1);
 const fx = new Fx();
 
@@ -117,6 +118,14 @@ function recordShift(): void {
   if (state.status === 'debrief' && (state.grade === 'S' || state.grade === 'A')) sdk.happytime();
 }
 
+/** Fresh game parked on the tutorial screen (also the backdrop for HOW TO PLAY). */
+function goToTutorialShift(): void {
+  seed = freshSeed();
+  state = createGame(seed, day, true, upgradeState);
+  shiftRecorded = false;
+  fx.reset(state);
+}
+
 const input = createInput({
   canvas,
   getState: () => state,
@@ -125,6 +134,10 @@ const input = createInput({
     startShift: () => {
       startShift(state);
       sdk.gameplayStart();
+      if (!seenTutorial) {
+        seenTutorial = true;
+        save('fa.seenTutorial', 1);
+      }
     },
     nextShift: () => newShift(day + 1, false),
     retryShift: () => newShift(day, false),
@@ -168,10 +181,18 @@ const input = createInput({
     goToSettings: () => {
       state.status = 'settings' as any;
     },
-    goToTutorial: () => {
-      // Create a fresh game for the new shift
+    goToTutorial: goToTutorialShift,
+    playFromMenu: () => {
+      // Returning players skip the tutorial card and go straight to work.
+      if (seenTutorial) newShift(day, false);
+      else goToTutorialShift();
+    },
+    quitToMenu: () => {
+      // Abandon the shift: nothing earned, nothing recorded — same as a reload.
+      sdk.gameplayStop();
       seed = freshSeed();
       state = createGame(seed, day, true, upgradeState);
+      state.status = 'menu' as any;
       shiftRecorded = false;
       fx.reset(state);
     },

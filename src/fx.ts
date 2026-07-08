@@ -51,23 +51,26 @@ export class Fx {
       case 'goAround':
         this.pop(e.x, e.y - 14, e.amount ? `GO-AROUND ${e.amount}` : 'GO-AROUND', PALETTE.warn, 12);
         break;
+      case 'assign':
+        this.pop(e.x, e.y - 14, 'CLEARED ✓', PALETTE.blip, 11, 0.9);
+        break;
       case 'corridorBusy':
         this.pop(e.x, e.y - 14, `CORRIDOR BUSY — ${e.endName}`, PALETTE.warn, 12, 1.2);
         break;
       case 'nearMiss':
-        this.pop(e.x, e.y - 14, `NEAR MISS ${e.amount}`, PALETTE.warn, 13);
+        this.pop(e.x, e.y - 14, `NEAR MISS`, PALETTE.warn, 13);
         this.shake = Math.max(this.shake, 4);
         break;
       case 'divert':
         this.pop(e.x, e.y, `DIVERTED ${e.amount}`, PALETTE.warn, 12);
         break;
       case 'crash':
-        this.pop(e.x, e.y - 22, `-$500`, PALETTE.danger, 20, 2);
+        this.pop(e.x, e.y - 22, `CRASH`, PALETTE.danger, 20, 2);
         this.shake = Math.max(this.shake, 14);
         this.flash = Math.max(this.flash, 0.25);
         break;
       case 'groundCrash':
-        this.pop(e.x, e.y - 22, `GROUND CRASH -$500`, PALETTE.danger, 20, 2);
+        this.pop(e.x, e.y - 22, `GROUND CRASH`, PALETTE.danger, 20, 2);
         this.shake = Math.max(this.shake, 16);
         this.flash = Math.max(this.flash, 0.3);
         break;

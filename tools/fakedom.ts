@@ -45,7 +45,9 @@ let rafCb: ((now: number) => void) | null = null;
 
 const g = globalThis as any;
 g.document = { getElementById: () => canvas };
-g.location = { search: '' };
+// Pin the seed so smoke runs are deterministic (the sim's only randomness);
+// main.ts routes every freshSeed() through ?seed= when present.
+g.location = { search: '?seed=7' };
 g.window = {
   devicePixelRatio: 1,
   innerWidth: CSS_W,

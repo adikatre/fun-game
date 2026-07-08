@@ -1245,7 +1245,6 @@ export function update(state: GameState, dt: number, upgradeState: UpgradeState 
       remove.add(ac.id);
     } else if (ac.fuelSeconds <= 0 && AIRBORNE_PHASES.includes(ac.phase)) {
       state.incidents += 1;
-      state.cash -= CONFIG.crashPenalty;
       breakStreak(state);
       state.crashFx.push({ x: ac.x, y: ac.y, ttl: 1.5 });
       state.events.push({ kind: 'crash', x: ac.x, y: ac.y });
@@ -1258,7 +1257,6 @@ export function update(state: GameState, dt: number, upgradeState: UpgradeState 
     if (remove.has(ac.id)) continue;
     if (checkGroundCrash(state, ac)) {
       state.incidents += 1;
-      state.cash -= CONFIG.crashPenalty;
       breakStreak(state);
       state.crashFx.push({ x: ac.x, y: ac.y, ttl: 1.5 });
       state.events.push({ kind: 'groundCrash', x: ac.x, y: ac.y });
@@ -1305,11 +1303,9 @@ export function update(state: GameState, dt: number, upgradeState: UpgradeState 
         if (prevT > 0) {
           // separation regained before collision => near miss
           state.nearMisses += 1;
-          state.cash -= CONFIG.nearMissPenalty;
           breakStreak(state);
           state.events.push({
             kind: 'nearMiss',
-            amount: -CONFIG.nearMissPenalty,
             x: (a.x + b.x) / 2,
             y: (a.y + b.y) / 2,
           });
@@ -1347,7 +1343,6 @@ export function update(state: GameState, dt: number, upgradeState: UpgradeState 
     remove.add(a.id);
     remove.add(b.id);
     state.incidents += 1;
-    state.cash -= CONFIG.crashPenalty;
     breakStreak(state);
     const cx = (a.x + b.x) / 2;
     const cy = (a.y + b.y) / 2;

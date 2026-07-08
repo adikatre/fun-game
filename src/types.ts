@@ -159,7 +159,7 @@ export type GameEvent =
   | { kind: 'land'; amount: number; x: number; y: number; streak: number }
   | { kind: 'depart'; amount: number; x: number; y: number; streak: number }
   | { kind: 'goAround'; amount: number; x: number; y: number }
-  | { kind: 'nearMiss'; amount: number; x: number; y: number }
+  | { kind: 'nearMiss'; x: number; y: number }
   | { kind: 'divert'; amount: number; x: number; y: number }
   | { kind: 'crash'; x: number; y: number }
   | { kind: 'groundCrash'; x: number; y: number }
@@ -283,6 +283,8 @@ export interface RenderHints {
   upgrades: UpgradeState;
   shopScrollY?: number;
   confirmingReset?: boolean;
+  restartArmed?: boolean;
+  tutorialReadOnly?: boolean;
   volume?: number;
   musicVolume?: number;
   sfxVolume?: number;

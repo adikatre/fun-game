@@ -1,13 +1,14 @@
 // input.ts — translates pointer/keyboard into player actions on the sim.
-// Never advances time; only issues commands (legal while paused) and produces
-// RenderHints. Pointer events cover mouse AND touch: drag a plane onto a runway
-// side (or tap a plane, then tap the side) to clear it to land from that end;
-// right-click or double-tap = hold; Space = pause; M = mute; R = restart.
+// Never advances time; only issues commands and produces RenderHints. Pointer
+// events cover mouse AND touch: drag a plane onto a runway side (or tap a
+// plane, then tap the side) to clear it to land from that end; right-click or
+// double-tap = hold; Space/Esc = pause menu; M = mute; R = restart (press
+// twice mid-shift). While paused the modal pause menu captures all input.
 
 import { commandToRunway, toggleHold, commandGoAround, toggleManualHold, commandTakeoff, adjustAirborneSpeed } from './sim';
 import type { Aircraft, CareerStats, GameState, RenderHints, Vec, Viewport } from './types';
 import { AIRBORNE_PHASES } from './types';
-import { buttonAt, endButtons, hudButtons, upgradeButtons, floatingButtons, menuButtons, statsButtons, settingsButtons, type UiButton, type UiContext } from './ui';
+import { buttonAt, endButtons, hudButtons, upgradeButtons, floatingButtons, menuButtons, statsButtons, settingsButtons, pauseButtons, type UiButton, type UiContext } from './ui';
 import { upgradeAtPoint, upgradeScrollMax } from './upgrade-layout';
 import { type UpgradeState } from './upgrades';
 import { sdk, FULL_LAUNCH } from './sdk';
@@ -31,6 +32,8 @@ export interface UiActions {
   goToStats(): void;
   goToSettings(): void;
   goToTutorial(): void;
+  playFromMenu(): void; // straight into a shift, or via the tutorial on first run
+  quitToMenu(): void; // abandon the current shift (nothing is recorded)
   setVolume(v: number): void;
   getVolume(): number;
   setMusicVolume(v: number): void;
@@ -84,6 +87,9 @@ export function createInput(ctx: InputContext): InputController {
   let shopScrollY = 0;
   let confirmingReset = false;
   let volumeSliderDragging: number | null = null; // slider row being dragged
+  let tutorialReadOnly = false; // HOW TO PLAY from the menu (returns instead of starting)
+  let restartArmedUntil = 0; // restart needs a second press within this window
+  const restartArmed = () => Date.now() < restartArmedUntil;
 
   const toScreen = (e: { clientX: number; clientY: number }): Vec => {
     const r = canvas.getBoundingClientRect();
@@ -126,8 +132,10 @@ export function createInput(ctx: InputContext): InputController {
     const vp = getViewport();
     if (state.status === 'menu') return menuButtons(vp);
     if (state.status === 'stats') return statsButtons(vp);
-    if (state.status === 'settings') return settingsButtons(vp, confirmingReset);
+    if (state.status === 'settings') return settingsButtons(vp, confirmingReset, actions.getMuted());
     if (state.status === 'upgrade') return upgradeButtons(vp);
+    // the pause menu is modal: while it is up, it owns every button on screen
+    if (state.status === 'playing' && state.paused) return pauseButtons(vp, restartArmed(), actions.getMuted());
     const uictx = uiCtx();
     return [...hudButtons(vp, uictx), ...endButtons(vp, state), ...floatingButtons(vp, uictx)];
   }
@@ -178,10 +186,28 @@ export function createInput(ctx: InputContext): InputController {
 
   function pressButton(b: UiButton): void {
     actions.commandFeedback();
+    if (b.id !== 'pause_restart') restartArmedUntil = 0;
     const state = getState();
     switch (b.id) {
       case 'pause':
+      case 'pause_resume':
         actions.togglePause();
+        break;
+      case 'pause_restart':
+        if (restartArmed()) {
+          restartArmedUntil = 0;
+          actions.retryShift();
+          selectedId = null;
+        } else {
+          restartArmedUntil = Date.now() + 3000;
+        }
+        break;
+      case 'pause_sound':
+        actions.toggleMute();
+        break;
+      case 'pause_quit':
+        actions.quitToMenu();
+        selectedId = null;
         break;
       case 'mute':
         actions.toggleMute();
@@ -231,7 +257,8 @@ export function createInput(ctx: InputContext): InputController {
         break;
       // --- new menu/stats/settings buttons ---
       case 'menu_play':
-        actions.goToTutorial();
+        tutorialReadOnly = false;
+        actions.playFromMenu();
         break;
       case 'menu_stats':
         actions.goToStats();
@@ -240,7 +267,7 @@ export function createInput(ctx: InputContext): InputController {
         actions.goToSettings();
         break;
       case 'menu_tutorial':
-        // For now, just go to tutorial/play
+        tutorialReadOnly = true;
         actions.goToTutorial();
         break;
       case 'stats_back':
@@ -345,10 +372,11 @@ export function createInput(ctx: InputContext): InputController {
       return;
     }
 
-    // tutorial: click anywhere to start
+    // tutorial: click anywhere to start (or return, if opened via HOW TO PLAY)
     if (state.status === 'tutorial') {
       actions.commandFeedback();
-      actions.startShift();
+      if (tutorialReadOnly) actions.goToMenu();
+      else actions.startShift();
       return;
     }
     
@@ -374,6 +402,9 @@ export function createInput(ctx: InputContext): InputController {
       pressButton(b);
       return;
     }
+
+    // the pause menu is modal: clicks outside its buttons do nothing
+    if (state.paused) return;
 
     const plane = planeAt(pointerWorld);
     if (plane) {
@@ -433,6 +464,13 @@ export function createInput(ctx: InputContext): InputController {
 
     if (downPlaneId != null) {
       const state = getState();
+      if (state.paused) {
+        // pause opened mid-gesture: swallow the release
+        downPlaneId = null;
+        downWorld = null;
+        dragging = false;
+        return;
+      }
       if (dragging) {
         // released on a runway side => land (if airborne) or take off (if parked)
         const re = runwayEndAt(pointerWorld);
@@ -452,7 +490,7 @@ export function createInput(ctx: InputContext): InputController {
     e.preventDefault();
     const world = screenToWorld(toScreen(e));
     const state = getState();
-    if (state.status !== 'playing') return;
+    if (state.status !== 'playing' || state.paused) return;
     const plane = planeAt(world);
     if (plane) toggleHold(state, plane.id);
   }
@@ -472,9 +510,29 @@ export function createInput(ctx: InputContext): InputController {
     if (e.code === 'Space') {
       e.preventDefault();
       actions.unlockAudio();
-      if (state.status === 'tutorial') actions.startShift();
-      else if (state.status === 'playing') actions.togglePause();
-      else actions.retryShift();
+      if (state.status === 'tutorial') {
+        if (tutorialReadOnly) actions.goToMenu();
+        else actions.startShift();
+      } else if (state.status === 'playing') {
+        restartArmedUntil = 0;
+        actions.togglePause();
+      } else if (state.status === 'debrief' || state.status === 'fired') {
+        actions.retryShift();
+      }
+      return;
+    }
+    if (e.code === 'Escape') {
+      e.preventDefault();
+      if (state.status === 'playing') {
+        restartArmedUntil = 0;
+        actions.togglePause();
+      } else if (state.status === 'tutorial') {
+        if (tutorialReadOnly) actions.goToMenu();
+        else actions.startShift();
+      } else if (state.status === 'stats' || state.status === 'settings') {
+        confirmingReset = false;
+        actions.goToMenu();
+      }
       return;
     }
     if (e.code === 'KeyM') {
@@ -482,8 +540,20 @@ export function createInput(ctx: InputContext): InputController {
       return;
     }
     if (e.code === 'KeyR') {
-      actions.restartKey();
-      selectedId = null;
+      if (state.status === 'playing') {
+        // an in-progress shift needs a second press to confirm
+        if (restartArmed()) {
+          restartArmedUntil = 0;
+          actions.restartKey();
+          selectedId = null;
+        } else {
+          restartArmedUntil = Date.now() + 3000;
+          actions.commandFeedback();
+        }
+      } else if (state.status === 'debrief' || state.status === 'fired') {
+        actions.restartKey();
+        selectedId = null;
+      }
     }
   }
 
@@ -506,7 +576,7 @@ export function createInput(ctx: InputContext): InputController {
       }
     }
 
-    if (pointerWorld && state.status === 'playing' && hoverButtonId == null) {
+    if (pointerWorld && state.status === 'playing' && !state.paused && hoverButtonId == null) {
       const hp = planeAt(pointerWorld);
       hoverAircraftId = hp ? hp.id : null;
       const re = runwayEndAt(pointerWorld);
@@ -541,6 +611,8 @@ export function createInput(ctx: InputContext): InputController {
       upgrades: actions.getUpgrades(),
       shopScrollY,
       confirmingReset,
+      restartArmed: restartArmed(),
+      tutorialReadOnly,
       volume: actions.getVolume(),
       musicVolume: actions.getMusicVolume(),
       sfxVolume: actions.getSfxVolume(),

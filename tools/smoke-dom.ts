@@ -20,6 +20,19 @@ function nearestEnd(ac: { x: number; y: number }, rw: any) {
   return d0 < d1 ? 0 : 1;
 }
 
+// A pointerdown on a plane whose screen position sits under the bottom-right
+// HUD cluster presses the button instead of grabbing the plane, so the naive
+// controller below skips those planes (a human would just wait a beat).
+function clearOfHud(ac: { x: number; y: number }): boolean {
+  const p = worldToScreen(ac.x, ac.y);
+  return !(p.x > 880 && p.y > 720);
+}
+
+// Accidental pause-button presses open the modal pause menu; recover via Space.
+function ensureUnpaused(): void {
+  if (getGame().paused) fireKey('Space');
+}
+
 try {
   check('boots to the menu screen', getGame().status === 'menu');
   // Click the "START SHIFT" button (menu_play) which is at center-left
@@ -37,19 +50,24 @@ try {
   for (let i = 0; i < 120; i++) {
     const s = getGame();
     if (s.status !== 'playing') break;
-    const wcs = s.aircraft.filter((a: any) => a.phase === 'waitCross');
+    ensureUnpaused();
+    const wcs = s.aircraft.filter((a: any) => a.phase === 'waitCross' && clearOfHud(a));
     for (const wc of wcs) {
-      fireClick({ x: wc.x, y: wc.y });
-      fireScreenClick({ x: 1280 - 130, y: 800 - 138 }); // click authorize cross
+      fireClick({ x: wc.x, y: wc.y }); // select -> floating CROSS button appears
+      // mirror floatingButtons() in ui.ts: 80x32 button at selection +30/-40, clamped on-screen
+      const p = worldToScreen(wc.x, wc.y);
+      const bx = Math.max(8, Math.min(p.x + 30, 1280 - 80 - 8));
+      const by = Math.max(8, Math.min(p.y - 40, 800 - 32 - 8));
+      fireScreenClick({ x: bx + 40, y: by + 16 });
     }
 
     const rwA = s.runways[i % s.runways.length];
-    const arr = s.aircraft.find((a: any) => a.assignedRunwayId == null && (a.phase === 'inbound' || a.phase === 'holding'));
+    const arr = s.aircraft.find((a: any) => a.assignedRunwayId == null && (a.phase === 'inbound' || a.phase === 'holding') && clearOfHud(a));
     if (arr) {
       const end = nearestEnd(arr, rwA);
       fireDrag({ x: arr.x, y: arr.y }, { x: rwA.ends[end].threshold.x, y: rwA.ends[end].threshold.y });
     }
-    const dep = s.aircraft.find((a: any) => a.phase === 'readyDep');
+    const dep = s.aircraft.find((a: any) => a.phase === 'readyDep' && clearOfHud(a));
     if (dep) {
       const rwD = s.runways[(i + 1) % s.runways.length];
       const end = nearestEnd(dep, rwD);
@@ -91,8 +109,9 @@ try {
   }
 
   {
+    ensureUnpaused();
     const s = getGame();
-    const ac = s.aircraft.find((a: any) => a.phase === 'inbound');
+    const ac = s.aircraft.find((a: any) => a.phase === 'inbound' && clearOfHud(a));
     const rw = s.runways[0];
     if (ac) {
       fireDrag({ x: ac.x, y: ac.y }, { x: rw.ends[0].threshold.x, y: rw.ends[0].threshold.y });
@@ -108,8 +127,9 @@ try {
 
   {
     drive(30);
+    ensureUnpaused();
     const s = getGame();
-    const inbound = s.aircraft.filter((a: any) => a.phase === 'inbound');
+    const inbound = s.aircraft.filter((a: any) => a.phase === 'inbound' && clearOfHud(a));
     const rw = s.runways[0];
     if (inbound.length >= 2) {
       const [a, b] = inbound;
@@ -124,6 +144,7 @@ try {
   }
 
   {
+    ensureUnpaused();
     const ac = getGame().aircraft.find((a: any) => a.phase === 'inbound');
     if (ac) {
       fireRightClick({ x: ac.x, y: ac.y });
@@ -131,6 +152,7 @@ try {
     }
   }
 
+  ensureUnpaused();
   fireKey('Space');
   check('Space paused', getGame().paused);
   const t0 = getGame().time;
@@ -138,17 +160,25 @@ try {
   const t1 = getGame().time;
   check('sim time frozen while paused', t0 === t1);
 
-  const ac = getGame().aircraft.find((a: any) => a.phase === 'holding' || a.phase === 'inbound');
+  // pick a plane away from the centered pause-menu card so the pointerdown
+  // tests input capture rather than pressing a menu button
+  const outsidePauseMenu = (a: any) => {
+    const p = worldToScreen(a.x, a.y);
+    return p.x < 470 || p.x > 810 || p.y < 230 || p.y > 570;
+  };
+  const ac = getGame().aircraft.find((a: any) => (a.phase === 'holding' || a.phase === 'inbound') && outsidePauseMenu(a));
   const rw = getGame().runways[0];
   if (ac) {
+    const phaseBefore = ac.phase;
     fireDrag({ x: ac.x, y: ac.y }, { x: rw.ends[0].threshold.x, y: rw.ends[0].threshold.y });
-    check('can clear a plane to land while paused', getGame().aircraft.find((a: any) => a.id === ac.id)?.phase === 'approach');
+    check('pause menu captures input (no commands while paused)', getGame().aircraft.find((a: any) => a.id === ac.id)?.phase === phaseBefore);
   }
 
   fireKey('Space');
   check('Space un-paused', !getGame().paused);
 
-  fireKey('KeyR'); // restart
+  fireKey('KeyR'); // arms the restart confirm...
+  fireKey('KeyR'); // ...and the second press restarts
   check('restart reset handled to 0', getGame().handled === 0);
   check('restart reset time to ~0', getGame().time < 1);
 
